@@ -226,8 +226,7 @@
             <div id="ocr-lang-row" class="flex items-center gap-2">
               <label for="ocr-lang-select" class="text-xs font-bold text-gray-200">اللغة:</label>
               <select id="ocr-lang-select" class="flex-1 p-2 bg-gray-800 border border-gray-600 rounded-lg text-sm">
-                <option value="ara+eng">عربي + إنجليزي (الأفضل للأدوية والعملة والفواتير)</option>
-                <option value="ara">عربي فقط (أسرع للكتب والورق العربي)</option>
+                <option value="ara+eng">عربي + إنجليزي (إعداد موحد لكل المستندات)</option>
               </select>
             </div>
             <button id="preload-ocr-btn" type="button" onclick="preloadOcrFromSettings()"
@@ -475,7 +474,7 @@ let provider = PROVIDERS[readLS(LS_PROVIDER, 'gemini')] ? readLS(LS_PROVIDER, 'g
 let modelName = readLS(LS_MODEL, PROVIDERS[provider].defaultModel);
 if (!PROVIDERS[provider].models[modelName]) modelName = PROVIDERS[provider].defaultModel;
 
-let ocrLang = readLS(LS_OCR_LANG, 'ara+eng') === 'ara' ? 'ara' : 'ara+eng';
+let ocrLang = 'ara+eng'; // القراءة الثنائية دائماً حتى لا يفقد العميل النص الإنجليزي بسبب إعداد سابق
 let localScanEnabled = readLS(LS_LOCAL_SCAN, 'true') !== 'false';
 let navModeEnabled = readLS(LS_NAV_MODE, 'true') !== 'false';
 let spatialAudioEnabled = readLS(LS_SPATIAL, 'true') !== 'false';
@@ -496,6 +495,8 @@ try {
 let videoStream = null, facingMode = 'environment';
 let isProcessing = false, lastDescription = '', lastRecognizedText = '';
 let arabicVoice = null, wakeLock = null, assistantSpeaking = false, speechWatchdog = null;
+let speechQueue = [], speechQueueRunning = false, speechQueueToken = 0, speechVoiceWaitTimer = null, speechEnglishFallbackNotified = false;
+let activeOcrProgress = null;
 let recognition = null, isListening = false, isVerifyingApiKey = false;
 let torchOn = false, torchSupported = false, torchAutoActivated = false, torchManualOverride = false;
 let darkStreak = 0, brightStreak = 0, lastLensWarnTime = 0, lastTiltWarnTime = 0;
@@ -717,9 +718,10 @@ function populateModelsForProvider() {
 }
 function onProviderChange() { provider = providerSelect.value; populateModelsForProvider(); }
 providerSelect.value = provider; populateModelsForProvider(); proxyUrlInput.value = proxyUrl;
-ocrLangSelect.value = ocrLang;
+ocrLangSelect.value = 'ara+eng';
+writeLS(LS_OCR_LANG, 'ara+eng');
 ocrLangSelect.addEventListener('change', () => {
-  ocrLang = ocrLangSelect.value === 'ara' ? 'ara' : 'ara+eng';
+  ocrLang = 'ara+eng';
   writeLS(LS_OCR_LANG, ocrLang); refreshAssetButtonsState();
 });
 touchExploreCheckbox.checked = touchExploreEnabled;
@@ -744,38 +746,41 @@ let englishVoice = null;
 function pickSpeechVoices() {
   if (!('speechSynthesis' in window)) return;
   const voices = window.speechSynthesis.getVoices() || [];
-  arabicVoice = voices.find(v => /^ar[-_]eg/i.test(v.lang)) || voices.find(v => /^ar/i.test(v.lang)) || null;
-  englishVoice = voices.find(v => /^en[-_]us/i.test(v.lang)) || voices.find(v => /^en[-_]gb/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null;
+  const choose = (prefix, preferred) => {
+    const matches = voices.filter(v => new RegExp('^' + prefix, 'i').test(String(v.lang || '')));
+    return matches.find(v => preferred.test(String(v.lang || '')) && v.localService !== false)
+      || matches.find(v => v.localService !== false)
+      || matches.find(v => preferred.test(String(v.lang || '')))
+      || matches[0] || null;
+  };
+  arabicVoice = choose('ar', /^ar[-_]eg/i);
+  englishVoice = choose('en', /^en[-_]us/i) || choose('en', /^en[-_]gb/i);
 }
-if ('speechSynthesis' in window) { pickSpeechVoices(); window.speechSynthesis.onvoiceschanged = pickSpeechVoices; }
+if ('speechSynthesis' in window) {
+  pickSpeechVoices();
+  window.speechSynthesis.onvoiceschanged = pickSpeechVoices;
+}
 
-function speechLanguageForToken(token, fallback) {
-  const ar = (String(token).match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g) || []).length;
-  const en = (String(token).match(/[A-Za-z]/g) || []).length;
-  if (ar && en) return ar >= en ? 'ar' : 'en';
-  if (ar) return 'ar';
-  if (en) return 'en';
+function speechLanguageForChar(ch, fallback) {
+  if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(ch)) return 'ar';
+  if (/[A-Za-z]/.test(ch)) return 'en';
   return fallback || 'ar';
 }
 function splitSpeechRuns(text) {
-  const tokens = String(text || '').match(/\s+|[^\s]+/g) || [];
-  const runs = [];
-  let activeLang = 'ar', buffer = '';
-  for (const token of tokens) {
-    const nextLang = /^\s+$/.test(token) ? activeLang : speechLanguageForToken(token, activeLang);
-    if (buffer && nextLang !== activeLang) {
-      runs.push({ lang: activeLang, text: buffer }); buffer = '';
-    }
-    activeLang = nextLang; buffer += token;
+  const chars = Array.from(String(text || ''));
+  const runs = []; let lang = 'ar', buffer = '';
+  for (const ch of chars) {
+    const next = speechLanguageForChar(ch, lang);
+    if (buffer && next !== lang) { runs.push({ lang, text: buffer }); buffer = ''; }
+    lang = next; buffer += ch;
   }
-  if (buffer) runs.push({ lang: activeLang, text: buffer });
-
+  if (buffer) runs.push({ lang, text: buffer });
   const chunks = [];
   for (const run of runs) {
     let rest = run.text;
-    while (rest.length > 175) {
-      let cut = rest.lastIndexOf(' ', 175);
-      if (cut < 70) cut = 175;
+    while (rest.length > 180) {
+      let cut = rest.lastIndexOf(' ', 165);
+      if (cut < 65) cut = 180;
       chunks.push({ lang: run.lang, text: rest.slice(0, cut).trim() });
       rest = rest.slice(cut).trimStart();
     }
@@ -783,36 +788,75 @@ function splitSpeechRuns(text) {
   }
   return chunks.length ? chunks : [{ lang: 'ar', text: String(text || '') }];
 }
-function clearSpeechWatchdog() { if (speechWatchdog) { clearTimeout(speechWatchdog); speechWatchdog = null; } }
+function clearSpeechWatchdog() {
+  if (speechWatchdog) { clearTimeout(speechWatchdog); speechWatchdog = null; }
+}
+function processSpeechQueue() {
+  if (!('speechSynthesis' in window) || speechQueueRunning || !speechQueue.length) {
+    if (!speechQueue.length && !speechQueueRunning) { assistantSpeaking = false; clearSpeechWatchdog(); }
+    return;
+  }
+  pickSpeechVoices();
+  const item = speechQueue.shift();
+  const itemToken = item.token ?? speechQueueToken;
+  if (itemToken !== speechQueueToken) { processSpeechQueue(); return; }
+  if (item.lang === 'en' && !englishVoice) {
+    if (!speechEnglishFallbackNotified) {
+      speechEnglishFallbackNotified = true;
+      speechQueue.unshift({ lang: 'ar', text: 'تنبيه: لا يوجد صوت إنجليزي مناسب مثبت على هذا الهاتف. لن أقرأ الجزء الإنجليزي بصوت عربي حتى لا أضللك. ثبّت صوتاً إنجليزياً من إعدادات تحويل النص إلى كلام في الهاتف ثم أعد المحاولة.', token: itemToken });
+    }
+    processSpeechQueue();
+    return;
+  }
+  speechQueueRunning = true;
+  assistantSpeaking = true;
+  const utterance = new SpeechSynthesisUtterance(item.text);
+  if (item.lang === 'en') {
+    utterance.lang = englishVoice?.lang || 'en-US';
+    if (englishVoice) utterance.voice = englishVoice;
+  } else {
+    utterance.lang = arabicVoice?.lang || 'ar-EG';
+    if (arabicVoice) utterance.voice = arabicVoice;
+  }
+  utterance.rate = 0.94; utterance.pitch = 1.0;
+  let finished = false;
+  const finish = () => {
+    if (finished || itemToken !== speechQueueToken) return;
+    finished = true;
+    clearSpeechWatchdog(); speechQueueRunning = false;
+    if (!speechQueue.length) assistantSpeaking = false;
+    processSpeechQueue();
+  };
+  utterance.onend = finish; utterance.onerror = finish;
+  const expected = Math.min(45000, Math.max(5000, item.text.length * 190));
+  speechWatchdog = setTimeout(finish, expected);
+  try { window.speechSynthesis.speak(utterance); } catch (e) { finish(); }
+}
 function speak(text, interrupt = true) {
   if (!('speechSynthesis' in window) || !text) return;
-  try {
-    if (interrupt) { window.speechSynthesis.cancel(); clearSpeechWatchdog(); }
-    const chunks = splitSpeechRuns(text);
-    assistantSpeaking = true;
+  if (interrupt) {
+    speechQueueToken++;
+    speechQueue = [];
+    speechEnglishFallbackNotified = false;
+    if (speechVoiceWaitTimer) { clearTimeout(speechVoiceWaitTimer); speechVoiceWaitTimer = null; }
     clearSpeechWatchdog();
-    const estimatedMs = Math.min(90000, Math.max(5000, String(text).length * 145));
-    speechWatchdog = setTimeout(() => { assistantSpeaking = false; }, estimatedMs);
-    chunks.forEach((chunk, idx) => {
-      const utterance = new SpeechSynthesisUtterance(chunk.text);
-      if (chunk.lang === 'en') {
-        utterance.lang = englishVoice?.lang || 'en-US';
-        if (englishVoice) utterance.voice = englishVoice;
-      } else {
-        utterance.lang = arabicVoice?.lang || 'ar-EG';
-        if (arabicVoice) utterance.voice = arabicVoice;
-      }
-      utterance.rate = 0.96; utterance.pitch = 1.0;
-      utterance.onstart = () => { assistantSpeaking = true; };
-      if (idx === chunks.length - 1) {
-        utterance.onend = () => { assistantSpeaking = false; clearSpeechWatchdog(); };
-        utterance.onerror = () => { assistantSpeaking = false; clearSpeechWatchdog(); };
-      }
-      window.speechSynthesis.speak(utterance);
-    });
-  } catch (e) { assistantSpeaking = false; clearSpeechWatchdog(); }
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+    speechQueueRunning = false;
+    assistantSpeaking = false;
+  }
+  const token = speechQueueToken;
+  speechQueue.push(...splitSpeechRuns(text).map(item => ({ ...item, token })));
+  if (!speechQueueRunning) {
+    // Some Android browsers populate the voice list shortly after page load.
+    if (!window.speechSynthesis.getVoices().length && !speechVoiceWaitTimer) {
+      speechVoiceWaitTimer = setTimeout(() => {
+        speechVoiceWaitTimer = null;
+        pickSpeechVoices(); processSpeechQueue();
+      }, 550);
+    } else processSpeechQueue();
+  }
 }
-function stopSpeaking() { clearSpeechWatchdog(); if ('speechSynthesis' in window) window.speechSynthesis.cancel(); assistantSpeaking = false; }
+function stopSpeaking() { speechQueueToken++; speechQueue = []; speechQueueRunning = false; speechEnglishFallbackNotified = false; if (speechVoiceWaitTimer) { clearTimeout(speechVoiceWaitTimer); speechVoiceWaitTimer = null; } clearSpeechWatchdog(); if ('speechSynthesis' in window) window.speechSynthesis.cancel(); assistantSpeaking = false; }
 
 let audioContext = null;
 function ensureAudioContext() {
@@ -1642,8 +1686,12 @@ async function ensureOcrWorker() {
       const w = await Tesseract.createWorker(targetLang, 1, {
         cacheMethod: 'write',
         logger: m => {
-          if (m.status === 'loading language traineddata') updateStatus('التحقق من حزمة القراءة المحلية/تنزيل الناقص: ' + Math.round((m.progress || 0) * 100) + '%');
-          else if (m.status === 'recognizing text') updateStatus('قراءة النص: ' + Math.round((m.progress || 0) * 100) + '%');
+          if (m.status === 'loading language traineddata') {
+            updateStatus('جارٍ تجهيز ملفات لغة القراءة العربية والإنجليزية. هذه خطوة إعداد وليست قراءة للصورة.');
+          } else if (m.status === 'recognizing text' && activeOcrProgress) {
+            const p = Math.max(0, Math.min(1, Number(m.progress) || 0));
+            reportOcrProgress(activeOcrProgress.start + p * activeOcrProgress.span);
+          }
         }
       });
       ocrWorker = w; ocrWorkerLang = targetLang;
@@ -1739,33 +1787,50 @@ function ocrSimilarity(a, b) {
   return max ? Math.max(0, 1 - lev(x, y) / max) : 1;
 }
 
-async function runOcrPass(worker, mode, psm, angle) {
+function reportOcrProgress(value) {
+  if (!activeOcrProgress) return;
+  const next = Math.max(activeOcrProgress.last || 0, Math.min(96, Math.round(value)));
+  if (next <= (activeOcrProgress.last || 0)) return;
+  activeOcrProgress.last = next;
+  updateStatus('جاري تحليل النص محلياً: ' + next + '%');
+  if (next >= 30 && !activeOcrProgress.announced30) {
+    activeOcrProgress.announced30 = true;
+    speak('تحليل النص مستمر. أبق الهاتف ثابتاً.', false);
+  }
+  if (next >= 70 && !activeOcrProgress.announced70) {
+    activeOcrProgress.announced70 = true;
+    speak('شارفت مرحلة قراءة الصورة على الانتهاء. أراجع وضوح النتيجة.', false);
+  }
+}
+
+async function runOcrPass(worker, mode, psm, angle, progressStart, progressSpan) {
   await worker.setParameters({ tessedit_pageseg_mode: String(psm), preserve_interword_spaces: '1', user_defined_dpi: '300' });
-  const result = await worker.recognize(makeOcrPreprocessedCanvas(canvas, mode, angle));
+  if (activeOcrProgress) {
+    activeOcrProgress.start = progressStart;
+    activeOcrProgress.span = progressSpan;
+  }
+  const image = mode === 'raw' ? canvas : makeOcrPreprocessedCanvas(canvas, mode, angle);
+  const result = await worker.recognize(image);
+  reportOcrProgress(progressStart + progressSpan);
   const clean = extractCleanLinesResult(result?.data || {});
   return { ...clean, angle, mode, psm };
 }
 
 async function recognizeTextWithQualityChecks(worker) {
-  const candidates = [];
-  candidates.push(await runOcrPass(worker, 'gray', 6, 0));
-  let best = candidates[0];
-  if (best.score < 88 || best.text.length < 28) {
-    candidates.push(await runOcrPass(worker, 'bradley', 6, 0));
-    candidates.push(await runOcrPass(worker, 'gray', 11, 0));
-    best = candidates.slice().sort((a, b) => b.score - a.score || b.text.length - a.text.length)[0];
+  // One clean, unmodified pass first. A second conservative pass is only used
+  // when the first result is short or its engine confidence is weak.
+  const first = await runOcrPass(worker, 'raw', 6, 0, 8, 62);
+  if (first.text.length >= 14 && first.score >= 82) {
+    return { ...first, uncertain: false, attempts: 1, agreement: null };
   }
-  if (best.score < 74 || best.text.length < 12) {
-    candidates.push(await runOcrPass(worker, 'gray', 6, 180));
-    best = candidates.slice().sort((a, b) => b.score - a.score || b.text.length - a.text.length)[0];
-  }
-  if (best.score < 66) {
-    candidates.push(await runOcrPass(worker, 'gray', 6, 90));
-    candidates.push(await runOcrPass(worker, 'gray', 6, 270));
-    best = candidates.slice().sort((a, b) => b.score - a.score || b.text.length - a.text.length)[0];
-  }
-  const competing = candidates.filter(c => c !== best && c.score >= 58 && Math.abs(c.score - best.score) <= 6 && c.text && best.text && ocrSimilarity(c.text, best.text) < 0.90);
-  return { ...best, uncertain: competing.length > 0, attempts: candidates.length };
+
+  const second = await runOcrPass(worker, 'gray', 6, 0, 73, 23);
+  const similarity = ocrSimilarity(normalizeOcrDigits(first.text), normalizeOcrDigits(second.text));
+  const candidates = [first, second].filter(x => x.text && x.text.trim());
+  const best = candidates.sort((a, b) => b.score - a.score || b.text.length - a.text.length)[0] || first;
+  const disagreement = !!(first.text && second.text && similarity < 0.78);
+  const uncertain = !best.text || best.score < 58 || disagreement || (candidates.length < 2 && best.score < 72);
+  return { ...best, uncertain, disagreement, attempts: 2, agreement: similarity };
 }
 
 function detectExpiryWarning(rawText) {
@@ -1867,57 +1932,69 @@ async function captureSharpestCrispPhoto(maxDim, quality) {
 }
 
 async function readTextSmart() {
-  if (isProcessing) { updateStatus('انتظر انتهاء الطلب الحالي.'); return; }
+  if (isProcessing) { updateStatus('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); speak('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); return; }
   isProcessing = true; hideRiskIndicator(); vibrate(35); playAckTone();
+  activeOcrProgress = { start: 0, span: 0, last: 0, announced30: false, announced70: false };
+  speak('بدأت قراءة النص. وجّه الهاتف إلى الورقة واجعل النص بالكامل داخل الكاميرا، ثم أبق الهاتف ثابتاً. سأخبرك عندما تنتهي القراءة.');
   try {
     await withAutoTorchForCapture(async (q) => {
-      if (q?.isVeryDark) { const m = 'الإضاءة مظلمة جداً أو العدسة مغطاة.'; updateStatus(m); speak(m); return; }
+      if (q?.isVeryDark) {
+        const m = 'الإضاءة مظلمة جداً أو العدسة مغطاة. لم أبدأ القراءة. حسّن الإضاءة ثم أعد المحاولة.';
+        updateStatus(m); speak(m); return;
+      }
       let qrFound = '';
       if (barcodeDetector) { try { const codes = await barcodeDetector.detect(videoElement); if (codes?.[0]?.rawValue) qrFound = String(codes[0].rawValue).trim(); } catch (e) {} }
 
+      updateStatus('أتحقق من محرك القراءة المحفوظ على الهاتف...');
       const worker = await ensureOcrWorker();
       if (!worker) {
-        const m = qrFound
-          ? ('رمز باركود أو QR: ' + qrFound + '. لم أتمكن من فتح حزمة قراءة النص المحفوظة. اتصل بالإنترنت مرة واحدة لتنزيلها من الإعدادات.')
-          : 'قارئ النص غير جاهز. نزّل حزمة القراءة من الإعدادات عند توفر الإنترنت مرة واحدة؛ بعد حفظها ستعمل القراءة محلياً.';
+        const m = 'قارئ النص غير جاهز. يلزم تنزيل حزمة القراءة مرة واحدة من الإعدادات عند توفر الإنترنت.';
         updateStatus(m); speak(m); return;
       }
 
+      updateStatus('ألتقط صورة ثابتة للنص.');
       await captureSharpestCrispPhoto(TEXT_MAX_DIM, 0.96);
-      updateStatus('أفحص الصورة بأكثر من طريقة محلية لاختيار القراءة الأوضح...');
+      updateStatus('تم التقاط الصورة. أبدأ القراءة المحلية الآن.');
+      speak('تم التقاط الصورة. أبدأ الآن تحليل النص على الهاتف دون إرسال الصورة إلى الإنترنت.', false);
       const result = await recognizeTextWithQualityChecks(worker);
       const text = String(result.text || '').trim();
       lastRecognizedText = text;
 
       if (!text && qrFound) {
-        const msg = 'رمز باركود أو QR: ' + qrFound;
-        lastDescription = msg; updateStatus(msg); speak(msg); return;
+        const msg = 'لم أتمكن من استخراج النص، لكن تم التعرف على الرمز: ' + qrFound;
+        lastDescription = msg; updateStatus(msg); speak(msg, false); return;
       }
-      if (!text || result.score < 45) {
-        const msg = (q && q.isFlat)
-          ? 'لم أستطع استخراج نص موثوق. قد تكون الورقة مهزوزة أو قريبة جداً؛ أبعد الهاتف قليلاً وثبّته.'
-          : 'لم أستطع قراءة النص بدرجة ثقة كافية. قرّب الكاميرا من الورقة، واجعلها مستقيمة تحت إضاءة جيدة، ثم أعد المحاولة.';
-        lastDescription = msg; updateStatus(msg); speak(msg); return;
+      if (!text || result.uncertain || result.score < 58) {
+        const msg = result.disagreement
+          ? 'حاولت قراءة الصورة بطريقتين، لكن النتيجتين مختلفتان. لن أقرأ نصاً قد يكون خاطئاً. أعد توجيه الهاتف بحيث تظهر الورقة كاملة، وثبّته تحت إضاءة جيدة.'
+          : 'لم أستخرج نصاً يمكن الاعتماد عليه. أعد التصوير من مسافة مناسبة، وتأكد من وضوح الحروف وعدم اهتزاز الهاتف.';
+        lastDescription = msg; updateStatus(msg); speak(msg, false); return;
       }
 
-      let spoken = '';
-      if (result.angle) spoken += 'تم تدوير الصورة آلياً لمحاولة القراءة. ';
-      if (result.score < 76 || result.uncertain) {
-        spoken += 'تنبيه: هذه قراءة آلية وليست مؤكدة بالكامل؛ توجد كلمات قد تكون غير واضحة. ';
+      if (ocrLang === 'ara' && /[A-Za-z]{2,}/.test(text)) {
+        const msg = 'إعداد قارئ النص مضبوط على العربية فقط. قد لا يتعرف على الكلمات الإنجليزية. غيّر اللغة في الإعدادات إلى عربي وإنجليزي ثم أعد المحاولة.';
+        updateStatus(msg); speak(msg, false); return;
       }
-      spoken += text;
+
+      let spoken = 'هذه قراءة آلية. تحقق بشكل خاص من الأرقام والتواريخ والأسماء. ' + text;
+      if (result.score < 72) spoken = 'تنبيه: ثقة محرك القراءة منخفضة، وقد توجد أخطاء. ' + spoken;
       if (qrFound) spoken += '. الرمز المقروء: ' + qrFound;
-
       if (result.score >= 82) spoken += detectExpiryWarning(text);
       else if (/(exp|expiry|انتهاء|صلاحية)/i.test(text)) spoken += ' لم أتمكن من التحقق من تاريخ الصلاحية بثقة؛ لا تعتمد على هذه القراءة قبل مراجعة العبوة مع صيدلي.';
-      if (result.score < 76) spoken += ' أعد التصوير للحصول على قراءة أوضح.';
 
-      lastDescription = spoken; updateStatus('جودة التعرف التقريبية: ' + Math.round(result.score) + ' من 100. ' + spoken); speak(spoken);
+      lastDescription = spoken;
+      reportOcrProgress(96);
+      updateStatus('انتهى تحليل الصورة. تم استخدام ' + result.attempts + ' محاولة. ' + spoken);
+      if (activeOcrProgress) activeOcrProgress.last = 100;
+      speak(spoken, false);
     });
   } catch (e) {
-    const msg = 'حدثت مشكلة أثناء قراءة النص. ثبّت الهاتف وأعد المحاولة.';
-    updateStatus(msg); speak(msg);
-  } finally { isProcessing = false; }
+    const msg = 'تعذرت قراءة الصورة بسبب خطأ في المحرك أو الكاميرا. لا تعتمد على أي نتيجة سابقة. أعد المحاولة.';
+    updateStatus(msg); speak(msg, false);
+  } finally {
+    activeOcrProgress = null;
+    isProcessing = false;
+  }
 }
 
 function normalizeOcrDigits(v) { return String(v || '').normalize('NFKC').replace(/[\u064B-\u065F\u0670ـ]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/[٠-٩]/g, c => String('٠١٢٣٤٥٦٧٨٩'.indexOf(c))).replace(/[،؛:|]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(); }
@@ -2534,11 +2611,13 @@ function decidePersonal(q, items) {
 function speakWait(text) {
   return new Promise(res => {
     if (!('speechSynthesis' in window)) return res();
+    stopSpeaking();
     try {
-      window.speechSynthesis.cancel(); assistantSpeaking = true;
+      assistantSpeaking = true;
       const u = new SpeechSynthesisUtterance(text); u.lang = arabicVoice ? arabicVoice.lang : 'ar-EG'; if (arabicVoice) u.voice = arabicVoice;
-      const done = () => { assistantSpeaking = false; res(); };
-      u.onend = done; u.onerror = done; setTimeout(done, Math.min(30000, 2000 + text.length * 110));
+      let finished = false, timer = null;
+      const done = () => { if (finished) return; finished = true; if (timer) clearTimeout(timer); assistantSpeaking = false; res(); };
+      u.onend = done; u.onerror = done; timer = setTimeout(done, Math.min(30000, 2000 + text.length * 110));
       window.speechSynthesis.speak(u);
     } catch (e) { assistantSpeaking = false; res(); }
   });
