@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <title>سند V20.4 — تحسين قراءة المستندات العربية</title>
+  <title>سند V20.6 — عرض النص الكامل المطابق للنطق</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
@@ -92,6 +92,28 @@
     .risk-caution { color: #fde68a; border-color: #b45309; background: rgba(120, 53, 15, .56); }
     .risk-none { color: #bfdbfe; border-color: #1d4ed8; background: rgba(30, 58, 138, .48); }
     .risk-unknown { color: #e5e7eb; border-color: #4b5563; background: rgba(31, 41, 55, .82); }
+
+    /* لوحة مستقلة تعرض كامل النص المرسل إلى النطق، بدلاً من حشره في شريط الحالة الصغير. */
+    #ocr-result-panel {
+      position: absolute; inset: 8px; z-index: 40; min-height: 0;
+      display: none; flex-direction: column; gap: 10px;
+      padding: 12px; border: 2px solid #64748b; border-radius: 18px;
+      background: rgba(2, 6, 23, .98); color: #f8fafc;
+      box-shadow: 0 12px 36px rgba(0,0,0,.55);
+    }
+    #ocr-result-panel:not(.hidden) { display: flex !important; }
+    #ocr-result-panel .ocr-result-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+    #ocr-result-panel button { min-height: 48px; padding: 9px 12px; border-radius: 11px; font-weight: 800; }
+    #ocr-result-text {
+      flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
+      padding: 12px; border: 1px solid #475569; border-radius: 12px;
+      background: #0f172a; color: #fff;
+      font-size: clamp(18px, 4.8vw, 23px); line-height: 1.9;
+      text-align: start; white-space: pre-wrap; overflow-wrap: anywhere;
+      direction: auto; unicode-bidi: plaintext;
+      user-select: text; -webkit-user-select: text;
+    }
+    #ocr-result-meta { flex: 0 0 auto; color: #cbd5e1; font-size: 12px; line-height: 1.5; }
 
     /* === V20.5: تخطيط الهواتف + معاينة الكاميرا (يتغلب على Tailwind بـ !important) === */
     #main-screen { height: var(--app-h, 100dvh) !important; }
@@ -388,6 +410,22 @@
           </p>
         </div>
       </div>
+
+      <section id="ocr-result-panel" class="hidden" role="region" aria-labelledby="ocr-result-heading">
+        <header class="flex flex-col gap-2">
+          <div class="flex items-center justify-between gap-2">
+            <h2 id="ocr-result-heading" class="text-lg font-extrabold text-cyan-200">النص الذي يقرأه سند</h2>
+            <span aria-hidden="true" class="text-2xl">📖</span>
+          </div>
+          <p class="text-xs text-slate-300">هذا هو النص الكامل نفسه الذي يرسله سند إلى الصوت، وليس مقتطفاً من النتيجة.</p>
+          <div class="ocr-result-actions">
+            <button type="button" onclick="replayOcrResult()" class="flex-1 bg-blue-800 border border-blue-500 text-white">🔊 استمع للنص مرة أخرى</button>
+            <button type="button" onclick="hideOcrResultPanel()" class="bg-slate-700 border border-slate-500 text-white">إغلاق</button>
+          </div>
+        </header>
+        <div id="ocr-result-text" dir="auto" tabindex="0" aria-label="النص الكامل الذي سيقرأه سند"></div>
+        <p id="ocr-result-meta">النص المعروض مطابق للنص المرسل إلى النطق.</p>
+      </section>
     </div>
 
     <div id="control-dock" role="navigation" aria-label="الأدوات السريعة">
@@ -646,6 +684,10 @@ const torchBtn = document.getElementById('torch-btn');
 const torchLabel = document.getElementById('torch-label');
 const navHint = document.getElementById('nav-hint');
 const statusText = document.getElementById('status-text');
+const ocrResultPanel = document.getElementById('ocr-result-panel');
+const ocrResultText = document.getElementById('ocr-result-text');
+const ocrResultMeta = document.getElementById('ocr-result-meta');
+let lastOcrSpokenText = '';
 const riskIndicator = document.getElementById('risk-indicator');
 const videoElement = document.getElementById('camera-preview');
 const canvas = document.getElementById('canvas');
@@ -895,6 +937,25 @@ function playAckTone() {
 }
 function vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
 function updateStatus(t) { statusText.innerText = t; }
+function showOcrResultPanel(spokenText) {
+  const exactSpeechText = String(spokenText || '');
+  if (!exactSpeechText || !ocrResultPanel || !ocrResultText) return;
+  lastOcrSpokenText = exactSpeechText;
+  ocrResultText.textContent = exactSpeechText;
+  if (ocrResultMeta) {
+    const count = Array.from(exactSpeechText).length;
+    ocrResultMeta.textContent = 'عدد المحارف المعروضة: ' + count + ' — هذا المحتوى مطابق للنص الذي يمرره سند إلى النطق.';
+  }
+  ocrResultPanel.classList.remove('hidden');
+  requestAnimationFrame(() => { ocrResultText.scrollTop = 0; });
+}
+function hideOcrResultPanel() {
+  if (ocrResultPanel) ocrResultPanel.classList.add('hidden');
+}
+function replayOcrResult() {
+  if (!lastOcrSpokenText) { const m = 'لا توجد نتيجة قراءة محفوظة لإعادتها.'; updateStatus(m); speak(m); return; }
+  speak(lastOcrSpokenText);
+}
 function updateRiskIndicator(level) {
   riskIndicator.className = 'border rounded-xl px-3 py-1 text-xs';
   riskIndicator.classList.remove('hidden', 'risk-danger', 'risk-caution', 'risk-none', 'risk-unknown');
@@ -2103,7 +2164,7 @@ async function captureTextSnapshotOnce() {
 }
 async function readTextSmart() {
   if (isProcessing) { updateStatus('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); speak('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); return; }
-  isProcessing = true; hideRiskIndicator(); vibrate(35); playAckTone();
+  isProcessing = true; hideRiskIndicator(); hideOcrResultPanel(); lastOcrSpokenText = ''; vibrate(35); playAckTone();
   activeOcrProgress = { start: 0, span: 0, last: 0, announced70: false, announcedArabic: false, allowVoiceUpdates: false };
   lastRecognizedText = '';
   try {
@@ -2176,7 +2237,9 @@ async function readTextSmart() {
 
     lastDescription = spoken;
     reportOcrProgress(96);
-    updateStatus('انتهى تحليل الصورة الثابتة. تم استخدام ' + result.attempts + ' محاولة. ' + spoken);
+    // اعرض السلسلة ذاتها حرفياً التي سترسل إلى محرك النطق، لا مقتطفاً منها.
+    showOcrResultPanel(spoken);
+    updateStatus('انتهى تحليل الصورة. يظهر النص الكامل الذي سيقرأه سند في لوحة القراءة؛ يمكنك تمريره أو إعادة الاستماع إليه.');
     if (activeOcrProgress) activeOcrProgress.last = 100;
     speak(spoken);
   } catch (e) {
