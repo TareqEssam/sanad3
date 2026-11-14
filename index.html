@@ -1726,7 +1726,7 @@ async function ensureArabicOcrWorker() {
           }
         }
       });
-      await w.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1', user_defined_dpi: '300' });
+      await w.setParameters({ tessedit_pageseg_mode: '3', preserve_interword_spaces: '1', user_defined_dpi: '300' });
       ocrArabicWorker = w;
       return w;
     } catch (e) {
@@ -1858,6 +1858,24 @@ function ocrCandidateRank(result, preferArabic = false) {
   const arabicBonus = preferArabic && stats.arabic ? Math.min(2, stats.arabic / 80) : 0;
   return (Number(result?.score) || 0) + usefulLengthBonus + arabicBonus - shortTokenPenalty;
 }
+
+// لا تسمح لنتيجة قصيرة عالية الثقة أن تستبدل قراءة صفحة كاملة.
+// تُقارن التغطية بعدد الحروف والأسطر قبل استخدام درجة الثقة لترتيب المرشحين.
+function selectCompleteOcrCandidates(candidates) {
+  const usable = (candidates || []).filter(x => String(x?.text || '').trim());
+  if (usable.length <= 1) return usable;
+  const maxChars = Math.max(...usable.map(x => Number(x.charCount) || Array.from(String(x.text || '')).length));
+  const maxLines = Math.max(...usable.map(x => Number(x.lineCount) || String(x.text || '').split(/\n+/).filter(Boolean).length));
+  const eligible = usable.filter(x => {
+    const chars = Number(x.charCount) || Array.from(String(x.text || '')).length;
+    const lines = Number(x.lineCount) || String(x.text || '').split(/\n+/).filter(Boolean).length;
+    const charCoverage = chars / Math.max(1, maxChars);
+    const lineCoverage = lines / Math.max(1, maxLines);
+    return charCoverage >= 0.80 && (maxLines < 5 || lineCoverage >= 0.70);
+  });
+  // إذا لم يحقق أي مرشح عتبة التغطية، نحتفظ بالأكثر اكتمالاً بدلاً من اختيار مقتطف قصير.
+  return eligible.length ? eligible : [usable.sort((a, b) => (Number(b.charCount) || String(b.text || '').length) - (Number(a.charCount) || String(a.text || '').length))[0]];
+}
 function ocrSimilarity(a, b) {
   const x = String(a || '').replace(/\s+/g, ''), y = String(b || '').replace(/\s+/g, '');
   if (!x || !y) return 0;
@@ -1885,8 +1903,13 @@ async function runOcrPass(worker, mode, psm, angle, progressStart, progressSpan)
   const image = mode === 'raw' ? textSnapshotCanvas : makeOcrPreprocessedCanvas(textSnapshotCanvas, mode, angle);
   const result = await worker.recognize(image);
   reportOcrProgress(progressStart + progressSpan);
-  const clean = extractCleanLinesResult(result?.data || {});
-  return { ...clean, angle, mode, psm };
+  const data = result?.data || {};
+  const clean = extractCleanLinesResult(data);
+  const lineCountFromBoxes = Array.isArray(data.lines) ? data.lines.filter(ln => String(ln?.text || '').trim()).length : 0;
+  const lineCountFromText = String(clean.text || '').split(/\n+/).filter(line => line.trim()).length;
+  const lineCount = Math.max(lineCountFromBoxes, lineCountFromText);
+  const charCount = Array.from(String(clean.text || '')).filter(ch => /[\p{L}\p{N}]/u.test(ch)).length;
+  return { ...clean, charCount, lineCount, angle, mode, psm };
 }
 
 async function recognizeTextWithQualityChecks(worker) {
@@ -1910,10 +1933,15 @@ async function recognizeTextWithQualityChecks(worker) {
     }
     const arabicWorker = await ensureArabicOcrWorker();
     if (arabicWorker) {
-      const arabicPass = await runOcrPass(arabicWorker, 'raw', 4, 0, 64, 28);
+      // استخدم تقسيم الصفحة التلقائي نفسه؛ وضع PSM 4 كان قد ينتقي فقرة قصيرة
+      // بثقة أعلى ويهمل بقية صفحة Word.
+      const arabicPass = await runOcrPass(arabicWorker, 'raw', 3, 0, 64, 28);
       const arabicStats = getOcrScriptStats(arabicPass.text);
       const coverage = arabicStats.arabic / Math.max(1, firstStats.arabic);
-      const chooseArabic = !!arabicPass.text && (arabicPass.score >= first.score + 2 || (arabicPass.score >= first.score - 5 && coverage >= 0.78));
+      const charCoverage = (Number(arabicPass.charCount) || 0) / Math.max(1, Number(first.charCount) || Array.from(String(first.text || '')).length);
+      const lineCoverage = (Number(arabicPass.lineCount) || 0) / Math.max(1, Number(first.lineCount) || String(first.text || '').split(/\n+/).filter(Boolean).length);
+      const preservesPage = charCoverage >= 0.82 && (first.lineCount < 5 || lineCoverage >= 0.70);
+      const chooseArabic = !!arabicPass.text && preservesPage && coverage >= 0.78 && arabicPass.score >= first.score - 2;
       const best = chooseArabic ? arabicPass : first;
       const similarity = ocrSimilarity(normalizeOcrDigits(first.text), normalizeOcrDigits(arabicPass.text));
       const disagreement = !!(first.text && arabicPass.text && similarity < 0.58);
@@ -1924,9 +1952,10 @@ async function recognizeTextWithQualityChecks(worker) {
 
   // للمستند المختلط أو النتيجة الأولية الضعيفة: وضع العمود الواحد مناسب غالباً
   // لملفات Word ذات العناوين والفقرات، مع تباين ناعم يحافظ على نقاط الحروف.
-  const second = await runOcrPass(worker, 'softGray', 4, 0, 64, 28);
+  // تبقى المحاولة المساندة على تقسيم الصفحة التلقائي PSM 3؛ نغيّر التباين فقط.
+  const second = await runOcrPass(worker, 'softGray', 3, 0, 64, 28);
   const similarity = ocrSimilarity(normalizeOcrDigits(first.text), normalizeOcrDigits(second.text));
-  const candidates = [first, second].filter(x => x.text && x.text.trim());
+  const candidates = selectCompleteOcrCandidates([first, second]);
   const best = candidates.sort((a, b) => ocrCandidateRank(b, firstHasArabic) - ocrCandidateRank(a, firstHasArabic))[0] || first;
   const disagreement = !!(first.text && second.text && similarity < 0.58);
   // اختلاف الترتيب وحده لا يرفض النص؛ الرفض فقط عندما تكون ثقة أفضل مرشح ضعيفة جداً.
