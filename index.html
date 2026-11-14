@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <title>سند V20.7 — الإدراك المكاني المحلي</title>
+  <title>سند V20.8 — الرصد الفوري والإدراك المكاني</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
@@ -157,7 +157,7 @@
   <main id="settings-screen" class="hidden p-4 flex flex-col min-h-screen max-w-xl mx-auto w-full" role="main" aria-labelledby="settings-heading">
     <div class="w-full flex flex-col gap-4 pb-10">
       <h1 id="settings-heading" tabindex="-1" class="text-2xl font-bold text-center text-blue-400">
-        سند V20.7 — المساعد البصري والإدراك المكاني
+        سند V20.8 — المساعد البصري والرصد الفوري
       </h1>
       <p class="text-sm text-gray-200 leading-relaxed">
         مشروع إنساني مجاني بالكامل لفاقدي وضعاف البصر في مصر: يعمل <strong>بلا تكلفة أو بطاقة بنكية</strong>. يجمع بين الرؤية المحلية (اكتشاف الأجسام، تقدير القرب النسبي داخل الصورة، والتنبيه عند ظهور جسم أمامي، الكشاف التلقائي في الظلام، <strong>وطواط الظلام (تجريبي)</strong> لكشف الحوائط والأبواب المغلقة، قراءة النصوص وصلاحية الدواء، العملة المصرية، فحص البقع وتنسيق الملابس، ومدرب توجيه المرآة) + دعم الخادم المجاني ومفاتيح Gemini 3 و OpenRouter المجانية.
@@ -540,6 +540,7 @@ let torchOn = false, torchSupported = false, torchAutoActivated = false, torchMa
 let darkStreak = 0, brightStreak = 0, lastLensWarnTime = 0, lastTiltWarnTime = 0;
 
 let objectModel = null, objectModelLoading = null, isScanningFrame = false, liveMonitorTimer = null;
+let liveMonitorActive = false, lastLiveDetectMs = 0;
 let lastHazardAlertKey = '', lastHazardAlertTime = 0, prevCenterThreat = null;
 let ocrWorker = null, ocrWorkerLang = '', ocrInitPromise = null;
 // عامل عربي مستقل للمستندات العربية الخالصة؛ يعيد استخدام ملف ara المحفوظ في IndexedDB.
@@ -548,7 +549,6 @@ let segPipeline = null, segLoading = false, segLoadPromise = null;
 let depthPipeline = null, depthLoading = false, depthLoadPromise = null;
 let transformersModulePromise = null;
 let lastSpatialDiagnostics = null, lastSpatialInferenceAt = 0;
-let lastAutoSpatialScanAt = 0, lastAutoSpatialKey = '';
 
 let phonePitchBeta = null, savedOutfitColor = null;
 
@@ -1981,98 +1981,153 @@ async function initLocalObjectEngine() {
 function getRelativePositionArabic(bbox, vw) { if (!bbox || !vw) return 'في الوسط'; const r = (bbox[0] + bbox[2] / 2) / vw; return r < 0.34 ? 'على اليسار' : (r > 0.66 ? 'على اليمين' : 'أمامك'); }
 function sideFromPosition(pos) { return pos === 'على اليسار' ? 'left' : (pos === 'على اليمين' ? 'right' : 'center'); }
 
-function startLiveMonitoring() {
-  if (liveMonitorTimer) return;
-  if (localScanEnabled) initLocalObjectEngine();
-  liveMonitorTimer = setInterval(async () => {
-    if (isProcessing || isListening || isScanningFrame) return;
-    if (!videoElement || videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
-    const q = probeFrameQuality();
-    await evaluateContinuousAutoTorch(q);
-    if (!navModeEnabled || !localScanEnabled || assistantSpeaking || !objectModel || lifeMode === 'grooming' || lifeMode === 'clothes') return;
-    if (lifeMode === 'walk' && phonePitchBeta !== null && (Date.now() - lastTiltWarnTime) > 14000) {
-      if (phonePitchBeta > 112) { lastTiltWarnTime = Date.now(); speak('الكاميرا متجهة للأعلى؛ أمِل الهاتف للأمام قليلاً ليرى الطريق.', false); return; }
-      if (phonePitchBeta < 18)  { lastTiltWarnTime = Date.now(); speak('الكاميرا تنظر لأسفل جداً؛ ارفعها قليلاً.', false); return; }
-    }
-    isScanningFrame = true;
-    try {
-      const preds = await objectModel.detect(videoElement, 5, 0.56);
-      const objects = (preds || []).filter(p => LOCAL_OBJECT_MAP[p.class])
-        .sort((a, b) => ((LOCAL_OBJECT_MAP[b.class].priority || 1) - (LOCAL_OBJECT_MAP[a.class].priority || 1)) || ((b.score || 0) - (a.score || 0)));
-      const now = Date.now();
-      // تدقيق عميق قائم على الحدث: لا يعمل دورياً؛ يعمل فقط عند ظهور جسم واضح
-      // في المنطقة الأمامية، بشرط أن يكون النموذجان الثقيلان محمّلين بالفعل.
-      const spatialCandidate = objects.find(p => {
-        if ((Number(p.score) || 0) < 0.68 || !Array.isArray(p.bbox) || (LOCAL_OBJECT_MAP[p.class]?.priority || 1) < 2) return false;
-        const [bx, by, bw, bh] = p.bbox;
-        const cx = (bx + bw / 2) / videoElement.videoWidth;
-        const bottom = (by + bh) / videoElement.videoHeight;
-        const areaRatio = (bw * bh) / (videoElement.videoWidth * videoElement.videoHeight);
-        return cx >= 0.28 && cx <= 0.72 && bottom >= 0.62 && areaRatio >= 0.006;
-      });
-      if (!spatialCandidate) lastAutoSpatialKey = '';
-      let spatialWarningSpoken = false;
-      if (spatialCandidate && segPipeline && depthPipeline && (now - lastAutoSpatialScanAt) >= 18000) {
-        const candidatePos = getRelativePositionArabic(spatialCandidate.bbox, videoElement.videoWidth);
-        const candidateArea = spatialCandidate.bbox[2] * spatialCandidate.bbox[3] / (videoElement.videoWidth * videoElement.videoHeight);
-        const spatialKey = spatialCandidate.class + '_' + candidatePos + '_' + Math.round(candidateArea * 10);
-        if (spatialKey !== lastAutoSpatialKey) {
-          lastAutoSpatialKey = spatialKey;
-          lastAutoSpatialScanAt = now;
-          isProcessing = true;
-          try {
-            const spatialResult = await analyzeSpatialScene(q);
-            if (spatialResult.risk === 'يستلزم الحذر') {
-              updateRiskIndicator(spatialResult.risk);
-              lastDescription = spatialResult.report;
-              updateStatus(spatialResult.report);
-              // التنبيه الآلي مختصر حتى لا يطيل الكلام أثناء السير.
-              const compact = spatialResult.report.split(/(?<=\.)\s+/).slice(0, 2).join(' ');
-              speak(compact || 'أعدت فحص المشهد، وما زال هناك ما يستلزم الحذر. تحقق بعصاك.', true);
-              spatialWarningSpoken = true;
-            }
-          } catch (e) {
-            try { console.warn('[Sanad Spatial Auto Scan]', e); } catch (ignore) {}
-          } finally { isProcessing = false; }
-        }
-      }
-      const top = objects[0];
-      if (!top) { prevCenterThreat = null; return; }
-      const meta = LOCAL_OBJECT_MAP[top.class], pos = getRelativePositionArabic(top.bbox, videoElement.videoWidth);
-      const area = top.bbox[2] * top.bbox[3];
-      let loomingUrgent = false;
-      if (meta.priority >= 3 && pos === 'أمامك') {
-        if (prevCenterThreat && prevCenterThreat.cls === top.class && (now - prevCenterThreat.t) < 2000 && prevCenterThreat.area > 0 && ((area - prevCenterThreat.area) / prevCenterThreat.area) >= 0.34) loomingUrgent = true;
-        prevCenterThreat = { cls: top.class, area, t: now };
-      } else prevCenterThreat = null;
-      const key = (loomingUrgent ? 'LOOM_' : 'obj_') + top.class + '_' + pos;
-      if (loomingUrgent || key !== lastHazardAlertKey || (now - lastHazardAlertTime) > 6500) {
-        lastHazardAlertKey = key; lastHazardAlertTime = now;
-        const areaRatio = area / Math.max(1, videoElement.videoWidth * videoElement.videoHeight);
-        const urgent = loomingUrgent || meta.priority >= 3 || (pos === 'أمامك' && areaRatio >= 0.008);
-        playSpatialBeep(sideFromPosition(pos), urgent);
-        vibrate(loomingUrgent ? [120, 45, 120, 45, 120] : (urgent ? [85, 55, 85] : [35]));
-        const msg = loomingUrgent ? ('انتبه! ' + meta.ar + ' يزداد حجمه في الصورة بسرعة؛ تحقق من المسار!') : (meta.ar + ' ' + pos + '.');
-        if (!spatialWarningSpoken) {
-          updateStatus(msg); updateRiskIndicator(urgent ? 'يستلزم الحذر' : 'تعذر التحقق');
-          speak(msg, true);
-        }
-      }
-    } catch (e) {} finally { isScanningFrame = false; }
-  }, 1200);
+function scheduleLiveMonitorTick(delayMs) {
+  if (!liveMonitorActive) return;
+  if (liveMonitorTimer) clearTimeout(liveMonitorTimer);
+  liveMonitorTimer = setTimeout(runLiveMonitorFrame, Math.max(180, delayMs || 0));
 }
-function stopLiveMonitoring() { if (liveMonitorTimer) { clearInterval(liveMonitorTimer); liveMonitorTimer = null; } }
-function setNavMode(on, announce) {
-  navModeEnabled = !!on; writeLS(LS_NAV_MODE, navModeEnabled);
-  if (navModeCheckbox) navModeCheckbox.checked = navModeEnabled;
-  if (navHint) navHint.textContent = navModeEnabled ? 'تنبيهات رصد الأجسام نشطة (لا تغني عن العصا)' : 'التنبيهات المستمرة متوقفة';
-  if (announce) speak(navModeEnabled ? 'تم تشغيل التنبيهات المستمرة.' : 'تم إيقاف التنبيهات المستمرة.');
+
+async function runLiveMonitorFrame() {
+  liveMonitorTimer = null;
+  if (!liveMonitorActive) return;
+
+  // لا ننافس عمليات الكاميرا/الأوامر التي تتطلب حصرية الصورة.
+  if (isProcessing || isListening || isScanningFrame) {
+    scheduleLiveMonitorTick(260);
+    return;
+  }
+  if (!videoElement || videoElement.paused || videoElement.ended || videoElement.videoWidth === 0 || videoElement.readyState < 2) {
+    scheduleLiveMonitorTick(450);
+    return;
+  }
+
+  const q = probeFrameQuality();
+  // الكشاف مسار مستقل؛ لا ننتظر تبديل الكشاف قبل بدء كشف العوائق.
+  evaluateContinuousAutoTorch(q).catch(() => {});
+  if (q?.isLensCovered || q?.isVeryDark) {
+    scheduleLiveMonitorTick(900);
+    return;
+  }
+
+  if (!navModeEnabled || !localScanEnabled || lifeMode === 'grooming' || lifeMode === 'clothes') {
+    scheduleLiveMonitorTick(900);
+    return;
+  }
+
+  if (lifeMode === 'walk' && phonePitchBeta !== null && (Date.now() - lastTiltWarnTime) > 14000) {
+    if (phonePitchBeta > 112) {
+      lastTiltWarnTime = Date.now();
+      if (!assistantSpeaking) speak('الكاميرا متجهة للأعلى؛ أمِل الهاتف للأمام قليلاً ليرى الطريق.', false);
+    } else if (phonePitchBeta < 18) {
+      lastTiltWarnTime = Date.now();
+      if (!assistantSpeaking) speak('الكاميرا تنظر لأسفل جداً؛ ارفعها قليلاً.', false);
+    }
+  }
+
+  if (!objectModel) {
+    if (!objectModelLoading) initLocalObjectEngine();
+    scheduleLiveMonitorTick(350);
+    return;
+  }
+
+  const detectStartedAt = performance.now();
+  isScanningFrame = true;
+  try {
+    // المسار الحرج خفيف فقط: لا نشغّل SegFormer أو Depth Anything هنا.
+    // الإنذار الأول يجب أن يخرج قبل أي تحليل مكاني تفصيلي.
+    const preds = await objectModel.detect(videoElement, 5, 0.56);
+    const now = Date.now();
+    const vw = videoElement.videoWidth || 1, vh = videoElement.videoHeight || 1;
+    const objects = (preds || [])
+      .filter(p => LOCAL_OBJECT_MAP[p.class] && Number(p.score || 0) >= 0.56 && Array.isArray(p.bbox))
+      .map(p => {
+        const [x, y, w, h] = p.bbox;
+        const cx = (x + w / 2) / vw;
+        const bottom = (y + h) / vh;
+        const areaRatio = (w * h) / (vw * vh);
+        const pos = getRelativePositionArabic(p.bbox, vw);
+        // تقدير تقريبي لمنطقة السير الظاهرة؛ لا يعني أن بقية الصورة خالية أو آمنة.
+        const inWalkingZone = cx >= 0.29 && cx <= 0.71 && (bottom >= 0.56 || areaRatio >= 0.012);
+        return { ...p, cx, bottom, areaRatio, pos, inWalkingZone };
+      })
+      .sort((a, b) => Number(b.inWalkingZone) - Number(a.inWalkingZone)
+        || (LOCAL_OBJECT_MAP[b.class].priority - LOCAL_OBJECT_MAP[a.class].priority)
+        || ((b.score || 0) - (a.score || 0)));
+
+    const top = objects.find(p => p.inWalkingZone) || objects[0];
+    if (!top) {
+      prevCenterThreat = null;
+    } else {
+      const meta = LOCAL_OBJECT_MAP[top.class];
+      const area = top.bbox[2] * top.bbox[3];
+      const centered = top.pos === 'أمامك';
+      let loomingUrgent = false;
+      if (centered && meta.priority >= 2) {
+        if (prevCenterThreat && prevCenterThreat.cls === top.class
+          && (now - prevCenterThreat.t) < 2400 && prevCenterThreat.area > 0
+          && ((area - prevCenterThreat.area) / prevCenterThreat.area) >= 0.28) {
+          loomingUrgent = true;
+        }
+        prevCenterThreat = { cls: top.class, area, t: now };
+      } else {
+        prevCenterThreat = null;
+      }
+
+      const areaRatio = top.areaRatio;
+      const likelyPathThreat = !!top.inWalkingZone && meta.priority >= 2;
+      const urgent = loomingUrgent || (centered && likelyPathThreat
+        && (top.bottom >= 0.70 || areaRatio >= 0.025 || (meta.priority >= 3 && top.bottom >= 0.62)));
+      const key = (loomingUrgent ? 'LOOM_' : 'obj_') + top.class + '_' + top.pos;
+      const repeatWindow = urgent ? 2600 : 5200;
+      if (loomingUrgent || key !== lastHazardAlertKey || (now - lastHazardAlertTime) > repeatWindow) {
+        lastHazardAlertKey = key;
+        lastHazardAlertTime = now;
+        playSpatialBeep(sideFromPosition(top.pos), urgent);
+        vibrate(loomingUrgent ? [120, 45, 120, 45, 120] : (urgent ? [90, 45, 90] : [40]));
+
+        let msg;
+        if (loomingUrgent) {
+          msg = 'انتبه! ' + meta.ar + ' أمامك ويزداد حجمه في الصورة بسرعة؛ تحقق من المسار فوراً.';
+        } else if (likelyPathThreat) {
+          msg = (urgent ? 'انتبه! ' : '') + 'يوجد ' + meta.ar + ' في منطقة السير أمامك؛ تحقق منه بالعصا قبل التقدم.';
+        } else {
+          msg = meta.ar + ' ' + top.pos + '.';
+        }
+        updateStatus(msg);
+        updateRiskIndicator(likelyPathThreat ? 'يستلزم الحذر' : 'تعذر التحقق');
+        // التحذير العاجل يقاطع أي كلام؛ التنبيه الجانبي لا يقطع رسالة مهمة جارية.
+        speak(msg, urgent);
+      }
+    }
+  } catch (e) {
+    try { console.warn('[Sanad Fast Monitor]', e); } catch (ignore) {}
+  } finally {
+    lastLiveDetectMs = Math.round(performance.now() - detectStartedAt);
+    isScanningFrame = false;
+    // هدف دورة قرابة 850ms على الجهاز القادر، مع هامش راحة لا يقل عن 250ms.
+    // على الأجهزة الأبطأ تتكيف الدورة تلقائياً دون تداخل عمليات الكشف.
+    const targetCycleMs = lastLiveDetectMs > 620 ? 1150 : 850;
+    scheduleLiveMonitorTick(Math.max(250, targetCycleMs - lastLiveDetectMs));
+  }
+}
+
+function startLiveMonitoring() {
+  if (liveMonitorActive) return;
+  liveMonitorActive = true;
+  if (localScanEnabled) initLocalObjectEngine();
+  scheduleLiveMonitorTick(100);
+}
+
+function stopLiveMonitoring() {
+  liveMonitorActive = false;
+  if (liveMonitorTimer) { clearTimeout(liveMonitorTimer); liveMonitorTimer = null; }
 }
 
 async function measureDistanceNow() {
   if (isProcessing) return;
   isProcessing = true; vibrate(35); playAckTone();
-  updateStatus('ألتقط صورة واحدة، ثم أحلل الأجسام والحوائط والفتحات والدرجات والعمق معاً...');
+  updateStatus('تحليل مكاني تفصيلي. قد تتوقف التنبيهات السريعة مؤقتاً أثناء الحساب؛ قف في مكان آمن ولا تتحرك حتى يكتمل الفحص.');
+  speak('تحليل مكاني تفصيلي؛ قد تتوقف التنبيهات السريعة مؤقتاً. قف في مكان آمن حتى يكتمل الفحص.', true);
   try {
     await withAutoTorchForCapture(async (q) => {
       if (q?.isLensCovered || q?.isVeryDark) {
