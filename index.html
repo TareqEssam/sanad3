@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <title>سند V20.3 — إصلاحات سلامة + وطواط تجريبي</title>
+  <title>سند V20.4 — تحسين قراءة المستندات العربية</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
@@ -504,6 +504,8 @@ let darkStreak = 0, brightStreak = 0, lastLensWarnTime = 0, lastTiltWarnTime = 0
 let objectModel = null, objectModelLoading = null, isScanningFrame = false, liveMonitorTimer = null;
 let lastHazardAlertKey = '', lastHazardAlertTime = 0, prevCenterThreat = null;
 let ocrWorker = null, ocrWorkerLang = '', ocrInitPromise = null;
+// عامل عربي مستقل للمستندات العربية الخالصة؛ يعيد استخدام ملف ara المحفوظ في IndexedDB.
+let ocrArabicWorker = null, ocrArabicInitPromise = null;
 let segPipeline = null, segLoading = false, segLoadPromise = null;
 let depthPipeline = null, depthLoading = false, depthLoadPromise = null;
 let transformersModulePromise = null;
@@ -514,7 +516,7 @@ try { if ('BarcodeDetector' in window) barcodeDetector = new window.BarcodeDetec
 let faceDetector = null;
 try { if ('FaceDetector' in window) faceDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 }); } catch (e) {}
 
-const MAX_DIM = 1024, TEXT_MAX_DIM = 1920, TIMEOUT_MS = 45000, STEP_METERS = 0.70;
+const MAX_DIM = 1024, TEXT_MAX_DIM = 1920, OCR_STILL_MAX_DIM = 2800, TIMEOUT_MS = 45000, STEP_METERS = 0.70;
 
 const LOCAL_OBJECT_MAP = Object.freeze({
   'person':        { ar: 'شخص', priority: 3, h: 1.68, w: 0.48 },
@@ -1673,14 +1675,15 @@ async function measureDistanceNow() {
   } finally { isProcessing = false; }
 }
 
-async function ensureOcrWorker() {
+async function ensureOcrWorker(options = {}) {
+  const quiet = !!options.quiet;
   if (ocrWorker && ocrWorkerLang === ocrLang) return ocrWorker;
   if (ocrInitPromise) return ocrInitPromise;
   if (typeof Tesseract === 'undefined') return null;
   const targetLang = ocrLang;
   ocrInitPromise = (async () => {
     try {
-      updateStatus(isSavedFlag(ocrReadyKey(targetLang)) ? 'جارٍ فتح حزمة القراءة المحفوظة على الهاتف...' : 'جارٍ تنزيل حزمة القراءة وحفظها على الهاتف...');
+      if (!quiet) updateStatus(isSavedFlag(ocrReadyKey(targetLang)) ? 'جارٍ فتح حزمة القراءة المحفوظة على الهاتف...' : 'جارٍ تنزيل حزمة القراءة وحفظها على الهاتف...');
       if (ocrWorker && ocrWorkerLang !== targetLang) {
         try { await ocrWorker.terminate(); } catch (e) {}
         ocrWorker = null; ocrWorkerLang = '';
@@ -1688,8 +1691,8 @@ async function ensureOcrWorker() {
       const w = await Tesseract.createWorker(targetLang, 1, {
         cacheMethod: 'write',
         logger: m => {
-          if (m.status === 'loading language traineddata') {
-            updateStatus('جارٍ تجهيز ملفات لغة القراءة العربية والإنجليزية. هذه خطوة إعداد وليست قراءة للصورة.');
+          if (!quiet && m.status === 'loading language traineddata') {
+            updateStatus('جارٍ تجهيز ملفات لغة القراءة العربية والإنجليزية. يجري تجهيز المحرك على الهاتف.');
           } else if (m.status === 'recognizing text' && activeOcrProgress) {
             const p = Math.max(0, Math.min(1, Number(m.progress) || 0));
             reportOcrProgress(activeOcrProgress.start + p * activeOcrProgress.span);
@@ -1706,6 +1709,34 @@ async function ensureOcrWorker() {
   return ocrInitPromise;
 }
 
+// قراءة عربية خالصة: نفس ملف ara المخزن مسبقاً، دون منافسة نموذج الإنجليزية.
+// تُنشأ عند الحاجة فقط، وتظل جاهزة للجلسات التالية.
+async function ensureArabicOcrWorker() {
+  if (ocrArabicWorker) return ocrArabicWorker;
+  if (ocrArabicInitPromise) return ocrArabicInitPromise;
+  if (typeof Tesseract === 'undefined') return null;
+  ocrArabicInitPromise = (async () => {
+    try {
+      const w = await Tesseract.createWorker('ara', 1, {
+        cacheMethod: 'write',
+        logger: m => {
+          if (m.status === 'recognizing text' && activeOcrProgress) {
+            const p = Math.max(0, Math.min(1, Number(m.progress) || 0));
+            reportOcrProgress(activeOcrProgress.start + p * activeOcrProgress.span);
+          }
+        }
+      });
+      await w.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1', user_defined_dpi: '300' });
+      ocrArabicWorker = w;
+      return w;
+    } catch (e) {
+      try { if (ocrArabicWorker) await ocrArabicWorker.terminate(); } catch (e2) {}
+      ocrArabicWorker = null;
+      return null;
+    } finally { ocrArabicInitPromise = null; }
+  })();
+  return ocrArabicInitPromise;
+}
 async function preloadOcrFromSettings() {
   if (ocrInitPromise) return;
   preloadOcrBtn.disabled = true; preloadOcrBtn.textContent = 'جارٍ التحقق من الحزمة وحفظها...';
@@ -1741,7 +1772,23 @@ function makeOcrPreprocessedCanvas(sourceCanvas, mode = 'gray', angleDeg = 0) {
     if ((p & 3) === 0) { if (y < minY) minY = y; if (y > maxY) maxY = y; }
   }
   const span = Math.max(30, maxY - minY);
-  if (mode === 'gray') {
+  if (mode === 'softGray') {
+    // تحسين تباين لطيف مبني على histogram؛ لا يحول الحروف إلى أبيض/أسود
+    // ولا يمحو النقاط الصغيرة التي تميز الحروف العربية.
+    const hist = new Uint32Array(256);
+    for (let p = 0; p < gray.length; p++) hist[gray[p]]++;
+    const clip = Math.floor(gray.length * 0.008);
+    let acc = 0, low = 0, high = 255;
+    for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= clip) { low = i; break; } }
+    acc = 0;
+    for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc >= clip) { high = i; break; } }
+    if (high - low < 32) { low = minY; high = maxY; }
+    const range = Math.max(32, high - low);
+    for (let p = 0; p < gray.length; p++) {
+      const v = Math.max(0, Math.min(255, ((gray[p] - low) * 255) / range));
+      const k = p * 4; d[k] = d[k + 1] = d[k + 2] = v; d[k + 3] = 255;
+    }
+  } else if (mode === 'gray') {
     for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
       const p = y * w + x, st = ((gray[p] - minY) * 255) / span;
       const shVal = Math.max(0, Math.min(255, st * 1.32 - 0.08 * (((gray[p - 1] + gray[p + 1] + gray[p - w] + gray[p + w] - 4 * minY) * 255) / span)));
@@ -1766,22 +1813,51 @@ function makeOcrPreprocessedCanvas(sourceCanvas, mode = 'gray', angleDeg = 0) {
 
 function extractCleanLinesResult(data) {
   const lines = Array.isArray(data?.lines) ? data.lines : [];
-  if (lines.length) {
-    const kept = []; let weightedConfidence = 0, weightTotal = 0;
-    for (const ln of lines) {
-      const t = String(ln.text || '').replace(/[|_~`^§©®™]/g, '').replace(/\u0640/g, '').replace(/[\t ]+/g, ' ').trim();
-      const c = Math.max(0, Math.min(100, Number(ln.confidence) || 0));
-      if (!t || !/[\u0600-\u06FFA-Za-z0-9\u0660-\u0669]{2,}/.test(t)) continue;
-      kept.push(t);
-      const weight = Math.max(1, t.replace(/\s/g, '').length);
-      weightedConfidence += c * weight; weightTotal += weight;
-    }
-    if (kept.length) return { text: kept.join('\n').trim(), score: weightTotal ? weightedConfidence / weightTotal : 0 };
+  const clean = value => String(value || '')
+    .replace(/[|_~`^§©®™]/g, ' ')
+    .replace(/\u0640/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  // Prefer the engine's complete text block; rebuilding it from line boxes can
+  // disturb RTL order and discard short Arabic lines.
+  const engineText = clean(data?.text);
+  const lineText = clean(lines.map(ln => ln?.text || '').filter(Boolean).join('\n'));
+  let weightedConfidence = 0, weightTotal = 0;
+  for (const ln of lines) {
+    const t = String(ln?.text || '').trim();
+    if (!t) continue;
+    const c = Math.max(0, Math.min(100, Number(ln?.confidence) || 0));
+    const weight = Math.max(1, Array.from(t.replace(/\s/g, '')).length);
+    weightedConfidence += c * weight; weightTotal += weight;
   }
-  const text = String(data?.text || '').replace(/[|_~`]+/g, ' ').replace(/\u0640/g, '').replace(/[\t ]+/g, ' ').trim();
-  return { text, score: Math.max(0, Math.min(100, Number(data?.confidence) || 0)) };
+  const fallbackScore = Math.max(0, Math.min(100, Number(data?.confidence) || 0));
+  return {
+    text: engineText || lineText,
+    score: weightTotal ? weightedConfidence / weightTotal : fallbackScore
+  };
 }
 
+function getOcrScriptStats(value) {
+  const s = String(value || '');
+  const arabic = (s.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g) || []).length;
+  const latin = (s.match(/[A-Za-z]/g) || []).length;
+  const digits = (s.match(/[0-9٠-٩]/g) || []).length;
+  return { arabic, latin, digits, letters: arabic + latin };
+}
+
+function ocrCandidateRank(result, preferArabic = false) {
+  const text = String(result?.text || '').trim();
+  const stats = getOcrScriptStats(text);
+  const letters = Math.max(1, stats.letters + stats.digits);
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const oneCharTokens = tokens.filter(t => Array.from(t).filter(ch => /[\p{L}\p{N}]/u.test(ch)).length === 1).length;
+  const shortTokenPenalty = tokens.length ? (oneCharTokens / tokens.length) * 2.5 : 0;
+  const usefulLengthBonus = Math.min(3, letters / 140);
+  const arabicBonus = preferArabic && stats.arabic ? Math.min(2, stats.arabic / 80) : 0;
+  return (Number(result?.score) || 0) + usefulLengthBonus + arabicBonus - shortTokenPenalty;
+}
 function ocrSimilarity(a, b) {
   const x = String(a || '').replace(/\s+/g, ''), y = String(b || '').replace(/\s+/g, '');
   if (!x || !y) return 0;
@@ -1794,17 +1870,12 @@ function reportOcrProgress(value) {
   const next = Math.max(activeOcrProgress.last || 0, Math.min(96, Math.round(value)));
   if (next <= (activeOcrProgress.last || 0)) return;
   activeOcrProgress.last = next;
-  updateStatus('جاري تحليل النص محلياً: ' + next + '%');
-  if (next >= 30 && !activeOcrProgress.announced30) {
-    activeOcrProgress.announced30 = true;
-    speak('تحليل النص مستمر على الصورة التي التقطتها. يمكنك إبعاد الهاتف.', false);
-  }
-  if (next >= 70 && !activeOcrProgress.announced70) {
+  updateStatus('تم التقاط الصورة. جاري تحليل النص محلياً: ' + next + '%');
+  if (next >= 72 && activeOcrProgress.allowVoiceUpdates && !activeOcrProgress.announced70) {
     activeOcrProgress.announced70 = true;
-    speak('شارفت قراءة الصورة الثابتة على الانتهاء. أراجع وضوح النتيجة.', false);
+    speak('ما زلت أحلل الصورة التي التقطتها. يمكنك ترك الهاتف جانباً؛ لم أعد أستخدم الكاميرا.', false);
   }
 }
-
 async function runOcrPass(worker, mode, psm, angle, progressStart, progressSpan) {
   await worker.setParameters({ tessedit_pageseg_mode: String(psm), preserve_interword_spaces: '1', user_defined_dpi: '300' });
   if (activeOcrProgress) {
@@ -1819,27 +1890,49 @@ async function runOcrPass(worker, mode, psm, angle, progressStart, progressSpan)
 }
 
 async function recognizeTextWithQualityChecks(worker) {
-  // One clean, unmodified pass first. A second conservative pass is only used
-  // when the first result is short or its engine confidence is weak.
-  // PSM 3 يكتشف تقسيم الصفحة تلقائياً، وهو أنسب للمستند الكامل متعدد الأسطر.
-  const first = await runOcrPass(worker, 'raw', 3, 0, 4, 61);
-  const firstHasArabic = /[\u0600-\u06FF]/.test(first.text);
-  // الإنجليزية الواضحة تنتهي من المحاولة الأولى؛ أما أي نتيجة عربية فتُراجع أيضاً
-  // بتقسيم كتلة واحدة لأن تقسيم الصفحة قد يخطئ في وصل الحروف والأسطر العربية.
-  if (first.text.length >= 14 && first.score >= 84 && !firstHasArabic) {
-    return { ...first, uncertain: false, attempts: 1, agreement: null };
+  // المحاولة الأولى على الصورة الأصلية عالية الدقة، دون فلترة قد تمحو نقاط العربية.
+  const first = await runOcrPass(worker, 'raw', 3, 0, 4, 57);
+  const firstStats = getOcrScriptStats(first.text);
+  const firstHasArabic = firstStats.arabic >= 6;
+
+  // النص الإنجليزي الواضح يظل على المسار السريع السابق.
+  if (!firstHasArabic && first.text.length >= 14 && first.score >= 82) {
+    return { ...first, uncertain: false, caution: false, attempts: 1, agreement: null };
   }
 
-  // عند ضعف النتيجة أو وجود كتابة عربية نعيد تحليل الصورة نفسها ككتلة نص واحدة.
-  const second = await runOcrPass(worker, 'gray', 6, 0, 68, 27);
+  // المستند العربي الخالص: أعد القراءة بمحرك ara مستقل حتى لا ينافسه النموذج اللاتيني.
+  // الملف ara نفسه تم تنزيله مسبقاً ضمن ara+eng؛ لا نطلب حزمة جديدة من المستخدم.
+  if (firstHasArabic && firstStats.latin <= Math.max(3, Math.round(firstStats.arabic * 0.06))) {
+    updateStatus('تم رصد نص عربي. أجري مراجعة عربية مستقلة قبل القراءة الصوتية.');
+    if (activeOcrProgress?.allowVoiceUpdates && !activeOcrProgress.announcedArabic) {
+      activeOcrProgress.announcedArabic = true;
+      speak('أجري الآن مراجعة إضافية للنص العربي قبل قراءته.', false);
+    }
+    const arabicWorker = await ensureArabicOcrWorker();
+    if (arabicWorker) {
+      const arabicPass = await runOcrPass(arabicWorker, 'raw', 4, 0, 64, 28);
+      const arabicStats = getOcrScriptStats(arabicPass.text);
+      const coverage = arabicStats.arabic / Math.max(1, firstStats.arabic);
+      const chooseArabic = !!arabicPass.text && (arabicPass.score >= first.score + 2 || (arabicPass.score >= first.score - 5 && coverage >= 0.78));
+      const best = chooseArabic ? arabicPass : first;
+      const similarity = ocrSimilarity(normalizeOcrDigits(first.text), normalizeOcrDigits(arabicPass.text));
+      const disagreement = !!(first.text && arabicPass.text && similarity < 0.58);
+      const uncertain = !best.text || best.score < 52 || (disagreement && best.score < 62);
+      return { ...best, uncertain, caution: disagreement || best.score < 68, disagreement, attempts: 2, agreement: similarity, arabicPass: true };
+    }
+  }
+
+  // للمستند المختلط أو النتيجة الأولية الضعيفة: وضع العمود الواحد مناسب غالباً
+  // لملفات Word ذات العناوين والفقرات، مع تباين ناعم يحافظ على نقاط الحروف.
+  const second = await runOcrPass(worker, 'softGray', 4, 0, 64, 28);
   const similarity = ocrSimilarity(normalizeOcrDigits(first.text), normalizeOcrDigits(second.text));
   const candidates = [first, second].filter(x => x.text && x.text.trim());
-  const best = candidates.sort((a, b) => b.score - a.score || b.text.length - a.text.length)[0] || first;
-  const disagreement = !!(first.text && second.text && similarity < 0.78);
-  const uncertain = !best.text || best.score < 58 || disagreement || (candidates.length < 2 && best.score < 72);
-  return { ...best, uncertain, disagreement, attempts: 2, agreement: similarity };
+  const best = candidates.sort((a, b) => ocrCandidateRank(b, firstHasArabic) - ocrCandidateRank(a, firstHasArabic))[0] || first;
+  const disagreement = !!(first.text && second.text && similarity < 0.58);
+  // اختلاف الترتيب وحده لا يرفض النص؛ الرفض فقط عندما تكون ثقة أفضل مرشح ضعيفة جداً.
+  const uncertain = !best.text || best.score < 52 || (disagreement && best.score < 62);
+  return { ...best, uncertain, caution: disagreement || best.score < 68, disagreement, attempts: 2, agreement: similarity, arabicPass: false };
 }
-
 function detectExpiryWarning(rawText) {
   const t = String(rawText || '').replace(/[٠-٩]/g, c => String('٠١٢٣٤٥٦٧٨٩'.indexOf(c)));
   const now = new Date(), cy = now.getFullYear(), cm = now.getMonth() + 1;
@@ -1938,35 +2031,61 @@ async function captureSharpestCrispPhoto(maxDim, quality) {
   return (q2 && q1 && q2.sharpness >= q1.sharpness) ? captureFrame(maxDim, quality) : f1;
 }
 
-function captureTextSnapshotOnce() {
+async function captureTextSnapshotOnce() {
+  const track = videoStream?.getVideoTracks?.()[0];
+  let bitmap = null;
+  // التقاط فوتوغرافي واحد من حساس الهاتف، بدلاً من إطار معاينة 1280×720.
+  // إذا لم يدعم المتصفح ImageCapture نستخدم إطار فيديو واحداً كخيار توافق.
+  if (track?.readyState === 'live' && typeof ImageCapture !== 'undefined') {
+    try {
+      const photoCapture = new ImageCapture(track);
+      let photoSettings = null;
+      try {
+        const caps = await photoCapture.getPhotoCapabilities();
+        const maxW = Number(caps?.imageWidth?.max) || 0;
+        const maxH = Number(caps?.imageHeight?.max) || 0;
+        if (maxW > 0 && maxH > 0) {
+          photoSettings = { imageWidth: Math.min(4000, Math.round(maxW)), imageHeight: Math.min(4000, Math.round(maxH)) };
+        }
+      } catch (e) {}
+      const blob = photoSettings ? await photoCapture.takePhoto(photoSettings) : await photoCapture.takePhoto();
+      bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+      const scale = Math.min(1, OCR_STILL_MAX_DIM / Math.max(bitmap.width, bitmap.height));
+      textSnapshotCanvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      textSnapshotCanvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = textSnapshotCanvas.getContext('2d', { alpha: false, willReadFrequently: true });
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, 0, 0, textSnapshotCanvas.width, textSnapshotCanvas.height);
+      return { width: textSnapshotCanvas.width, height: textSnapshotCanvas.height, source: 'still-photo', originalWidth: bitmap.width, originalHeight: bitmap.height };
+    } catch (e) {
+      // دعم المتصفحات التي تتيح الفيديو ولا تتيح صورة فوتوغرافية مستقلة.
+    } finally { if (bitmap) { try { bitmap.close(); } catch (e) {} } }
+  }
+
   const vw = videoElement.videoWidth, vh = videoElement.videoHeight;
   if (!vw || !vh || videoElement.readyState < 2) throw new Error('الكاميرا لم تجهز لالتقاط الصورة.');
-  const scale = Math.min(1, TEXT_MAX_DIM / Math.max(vw, vh));
+  const scale = Math.min(1, OCR_STILL_MAX_DIM / Math.max(vw, vh));
   textSnapshotCanvas.width = Math.max(1, Math.round(vw * scale));
   textSnapshotCanvas.height = Math.max(1, Math.round(vh * scale));
   const ctx = textSnapshotCanvas.getContext('2d', { alpha: false, willReadFrequently: true });
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  // عملية رسم واحدة فقط: جميع محاولات OCR اللاحقة تستخدم هذه الصورة الثابتة.
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(videoElement, 0, 0, textSnapshotCanvas.width, textSnapshotCanvas.height);
-  return { width: textSnapshotCanvas.width, height: textSnapshotCanvas.height };
+  return { width: textSnapshotCanvas.width, height: textSnapshotCanvas.height, source: 'video-frame', originalWidth: vw, originalHeight: vh };
 }
-
 async function readTextSmart() {
   if (isProcessing) { updateStatus('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); speak('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); return; }
   isProcessing = true; hideRiskIndicator(); vibrate(35); playAckTone();
-  activeOcrProgress = { start: 0, span: 0, last: 0, announced30: false, announced70: false };
+  activeOcrProgress = { start: 0, span: 0, last: 0, announced70: false, announcedArabic: false, allowVoiceUpdates: false };
   lastRecognizedText = '';
   try {
     updateStatus('وجّه الهاتف نحو النص واضغط مرة واحدة. جارٍ التقاط صورة واحدة...');
-    let captured = false;
+    let captureInfo = null;
     await withAutoTorchForCapture(async (q) => {
       if (q?.isVeryDark) return;
-      captureTextSnapshotOnce();
-      captured = true;
+      captureInfo = await captureTextSnapshotOnce();
     });
 
-    if (!captured) {
+    if (!captureInfo) {
       const m = 'لم أتمكن من التقاط الصورة. تأكد من أن الكاميرا ترى النص وأن العدسة غير مغطاة، ثم حاول مرة أخرى.';
       updateStatus(m); await speakWait(m); return;
     }
@@ -1977,27 +2096,36 @@ async function readTextSmart() {
       updateStatus(m); await speakWait(m); return;
     }
 
-    updateStatus('تم التقاط صورة واحدة. يمكنك إبعاد الهاتف الآن؛ سأحلل الصورة الثابتة.');
-    // ننتظر الإعلان حتى يسمعه المستخدم قبل أي تهيئة طويلة للمحرك.
-    await speakWait('تم التقاط صورة واحدة للنص. يمكنك إبعاد الهاتف الآن، ولا حاجة لإبقاء الهاتف موجهاً إلى الورقة أثناء التحليل.');
+    const photoText = captureInfo.source === 'still-photo' ? 'صورة فوتوغرافية عالية الدقة' : 'لقطة واحدة من الكاميرا';
+    updateStatus('تم التقاط ' + photoText + '. جاري تحليلها الآن؛ يمكنك إبعاد الهاتف.');
+
+    // ابدأ تجهيز المحرك فوراً، بالتوازي مع رسالة التأكيد الصوتية؛ لا تنتظر انتهاء النطق.
+    const workerPromise = ensureOcrWorker({ quiet: true });
+    const announcementPromise = speakWait('تم التقاط الصورة، وجارٍ تحليل النص الآن. يمكنك إبعاد الهاتف، ولا حاجة لإبقاء الهاتف موجهاً إلى المستند.');
+    announcementPromise.then(() => { if (activeOcrProgress) activeOcrProgress.allowVoiceUpdates = true; });
 
     let qrFound = '';
-    if (barcodeDetector) {
+    const qrPromise = (async () => {
+      if (!barcodeDetector) return;
       try {
         const codes = await barcodeDetector.detect(textSnapshotCanvas);
         if (codes?.[0]?.rawValue) qrFound = String(codes[0].rawValue).trim();
       } catch (e) {}
-    }
+    })();
 
-    updateStatus('الصورة محفوظة مؤقتاً داخل الهاتف. جارٍ فتح حزمة القراءة المحفوظة...');
-    const worker = await ensureOcrWorker();
+    const worker = await workerPromise;
     if (!worker) {
-      const m = 'تم التقاط الصورة، لكن محرك القراءة غير جاهز. نزّل حزمة القراءة مرة واحدة من الإعدادات عند توفر الإنترنت، ثم أعد المحاولة.';
+      await announcementPromise;
+      const m = 'تم التقاط الصورة، لكن محرك القراءة غير جاهز. افتح الإعدادات ونزّل حزمة القراءة مرة واحدة عند توفر الإنترنت، ثم أعد المحاولة.';
       updateStatus(m); speak(m); return;
     }
 
-    updateStatus('بدأ تحليل الصورة الثابتة محلياً. يمكنك ترك الهاتف جانباً.');
-    const result = await recognizeTextWithQualityChecks(worker);
+    updateStatus('بدأ تحليل الصورة الملتقطة محلياً. يمكنك ترك الهاتف جانباً.');
+    const recognitionPromise = recognizeTextWithQualityChecks(worker);
+    const [result] = await Promise.all([recognitionPromise, qrPromise]);
+    // إذا انتهى OCR بسرعة، لا نبدأ نطق النتيجة قبل اكتمال رسالة الالتقاط.
+    await announcementPromise;
+
     const text = String(result.text || '').trim();
     lastRecognizedText = text;
 
@@ -2005,15 +2133,14 @@ async function readTextSmart() {
       const msg = 'لم أتمكن من استخراج النص، لكن تم التعرف على الرمز: ' + qrFound;
       lastDescription = msg; updateStatus(msg); speak(msg); return;
     }
-    if (!text || result.uncertain || result.score < 58) {
-      const msg = result.disagreement
-        ? 'حللت الصورة بإعدادين مختلفين، لكن النص الناتج غير متطابق بما يكفي. لن أقرأه حتى لا أضللك. حاول التقاط النص أقرب وبإضاءة جيدة.'
-        : 'لم أستخرج نصاً يمكن الاعتماد عليه من الصورة. يمكنك إعادة المحاولة؛ لا حاجة لإبقاء الهاتف موجهاً أثناء هذه الرسالة.';
+    if (!text || result.uncertain || result.score < 52) {
+      lastRecognizedText = '';
+      const msg = 'لم أتمكن من استخراج نص عربي أو إنجليزي موثوق بما يكفي من الصورة. لم أقرأ تخميناً. يمكنك المحاولة مرة أخرى مع وضع المستند كاملاً داخل الإطار وتجنب الظل.';
       lastDescription = msg; updateStatus(msg); speak(msg); return;
     }
 
     let spoken = 'هذه قراءة آلية. تحقق بشكل خاص من الأرقام والتواريخ والأسماء. ' + text;
-    if (result.score < 72) spoken = 'تنبيه: ثقة محرك القراءة منخفضة، وقد توجد أخطاء. ' + spoken;
+    if (result.caution) spoken = 'تنبيه: قد توجد أخطاء في بعض الكلمات أو اختلاف في قراءة أجزاء من المستند. استمع بحذر ولا تعتمد على الأرقام أو الأسماء دون مراجعتها. ' + spoken;
     if (qrFound) spoken += '. الرمز المقروء: ' + qrFound;
     if (result.score >= 82) spoken += detectExpiryWarning(text);
     else if (/(exp|expiry|انتهاء|صلاحية)/i.test(text)) spoken += ' لم أتمكن من التحقق من تاريخ الصلاحية بثقة؛ لا تعتمد على هذه القراءة قبل مراجعة العبوة مع صيدلي.';
@@ -2031,7 +2158,6 @@ async function readTextSmart() {
     isProcessing = false;
   }
 }
-
 function normalizeOcrDigits(v) { return String(v || '').normalize('NFKC').replace(/[\u064B-\u065F\u0670ـ]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/[٠-٩]/g, c => String('٠١٢٣٤٥٦٧٨٩'.indexOf(c))).replace(/[،؛:|]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(); }
 const EGP_RULES = [
   { value: 200, words: ['مئتا', 'مائتا', 'مئتان', 'مائتان', 'مائتين', 'two hundred'], colors: ['زيتوني', 'بني', 'بيج أو كريمي', 'أصفر أو ذهبي'] },
