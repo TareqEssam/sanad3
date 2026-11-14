@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <title>سند V20.6 — عرض النص الكامل المطابق للنطق</title>
+  <title>سند V20.7 — الإدراك المكاني المحلي</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
@@ -157,10 +157,10 @@
   <main id="settings-screen" class="hidden p-4 flex flex-col min-h-screen max-w-xl mx-auto w-full" role="main" aria-labelledby="settings-heading">
     <div class="w-full flex flex-col gap-4 pb-10">
       <h1 id="settings-heading" tabindex="-1" class="text-2xl font-bold text-center text-blue-400">
-        سند V20.2 — المساعد البصري الشامل المجاني
+        سند V20.7 — المساعد البصري والإدراك المكاني
       </h1>
       <p class="text-sm text-gray-200 leading-relaxed">
-        مشروع إنساني مجاني بالكامل لفاقدي وضعاف البصر في مصر: يعمل <strong>بلا تكلفة أو بطاقة بنكية</strong>. يجمع بين الرؤية المحلية (المسافة بالخطوات، تحذير الاقتراب السريع، الكشاف التلقائي في الظلام، <strong>وطواط الظلام (تجريبي)</strong> لكشف الحوائط والأبواب المغلقة، قراءة النصوص وصلاحية الدواء، العملة المصرية، فحص البقع وتنسيق الملابس، ومدرب توجيه المرآة) + دعم الخادم المجاني ومفاتيح Gemini 3 و OpenRouter المجانية.
+        مشروع إنساني مجاني بالكامل لفاقدي وضعاف البصر في مصر: يعمل <strong>بلا تكلفة أو بطاقة بنكية</strong>. يجمع بين الرؤية المحلية (اكتشاف الأجسام، تقدير القرب النسبي داخل الصورة، والتنبيه عند ظهور جسم أمامي، الكشاف التلقائي في الظلام، <strong>وطواط الظلام (تجريبي)</strong> لكشف الحوائط والأبواب المغلقة، قراءة النصوص وصلاحية الدواء، العملة المصرية، فحص البقع وتنسيق الملابس، ومدرب توجيه المرآة) + دعم الخادم المجاني ومفاتيح Gemini 3 و OpenRouter المجانية.
       </p>
 
       <p id="settings-status" role="status" aria-live="polite"
@@ -214,8 +214,8 @@
           <label class="flex items-start gap-3 rounded-xl border border-gray-700 p-3 cursor-pointer">
             <input id="live-local-scan-checkbox" type="checkbox" checked>
             <span>
-              <strong class="block text-base text-white">رصد الأجسام والمسافة بالخطوات + تحذير الاقتراب السريع</strong>
-              <span class="text-gray-300">يحسب المسافة بالخطوات وينبه إذا اقتربت مركبة أو شخص بسرعة.</span>
+              <strong class="block text-base text-white">رصد الأجسام والتنبيه عند الاقتراب الظاهر</strong>
+              <span class="text-gray-300">يرصد الأجسام المعروفة وينبه عند ظهور جسم بارز في مجال السير. لا يقيس هذا المسار المسافة بالمتر.</span>
             </span>
           </label>
 
@@ -266,7 +266,7 @@
             </button>
             <button id="load-depth-btn" type="button" onclick="enableAndLoadNeuralDepth()"
                     class="w-full rounded-xl bg-cyan-800 hover:bg-cyan-700 py-2.5 px-3 font-bold text-xs">
-              📏 تحميل محرك العمق ثلاثي الأبعاد (Depth Anything — 27 ميجا)
+              📏 تحميل محرك تقدير العمق النسبي (Depth Anything — 27 ميجا)
             </button>
           </div>
         </div>
@@ -382,7 +382,7 @@
              class="absolute top-2 right-2 w-14 h-14 object-cover rounded-lg border border-gray-700 opacity-60 pointer-events-none z-10"></video>
 
       <div class="absolute top-2 left-2 flex flex-col gap-1 z-10 pointer-events-none">
-        <div id="local-scanner-badge" class="bg-emerald-950/90 border border-emerald-700 text-emerald-200 text-[11px] font-bold px-2 py-0.5 rounded-full">الأجسام والمسافة: جارٍ التحضير...</div>
+        <div id="local-scanner-badge" class="bg-emerald-950/90 border border-emerald-700 text-emerald-200 text-[11px] font-bold px-2 py-0.5 rounded-full">رصد الأجسام: جارٍ التحضير...</div>
         <div id="seg-badge" class="bg-teal-950/90 border border-teal-700 text-teal-200 text-[11px] font-bold px-2 py-0.5 rounded-full hidden">SegFormer: نشط</div>
         <div id="depth-badge" class="bg-cyan-950/90 border border-cyan-700 text-cyan-200 text-[11px] font-bold px-2 py-0.5 rounded-full hidden">العمق الذكي: نشط</div>
         <div id="auto-torch-badge" class="bg-amber-950/90 border border-amber-700 text-amber-200 text-[11px] font-bold px-2 py-0.5 rounded-full">الكشاف التلقائي: مفعل</div>
@@ -398,7 +398,7 @@
               class="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-2 bg-gray-900 active:bg-gray-800 transition-colors">
         <span id="mode-hero-icon" class="text-5xl" aria-hidden="true">🛣️</span>
         <span id="mode-hero-title" class="text-xl font-bold text-blue-300">فحص الطريق والسلالم والحفر</span>
-        <span id="nav-hint" class="text-xs text-emerald-300 px-6 text-center font-medium">تنبيهات السير بالخطوات نشطة (لا تغني عن العصا)</span>
+        <span id="nav-hint" class="text-xs text-emerald-300 px-6 text-center font-medium">تنبيهات رصد الأجسام نشطة (لا تغني عن العصا)</span>
         <span class="text-xs text-gray-400 px-6 text-center">المس وسط الشاشة للوصف، أو اختر أداة من الأسفل</span>
       </button>
 
@@ -441,7 +441,7 @@
               class="bg-emerald-950 hover:bg-emerald-900 border border-emerald-700 transition">
         <span class="control-icon" aria-hidden="true">💵</span><span>العملة</span>
       </button>
-      <button id="distance-btn" type="button" onclick="measureDistanceNow()" data-speak-label="حساب المسافة والأبواب والسلالم" aria-label="المسافة والمكان"
+      <button id="distance-btn" type="button" onclick="measureDistanceNow()" data-speak-label="تحليل المكان والأجسام والحوائط والأبواب والسلالم والعمق النسبي" aria-label="المسافة والمكان"
               class="bg-cyan-950 hover:bg-cyan-900 border border-cyan-700 transition">
         <span class="control-icon" aria-hidden="true">📏</span><span>المسافة والمكان</span>
       </button>
@@ -547,6 +547,9 @@ let ocrArabicWorker = null, ocrArabicInitPromise = null;
 let segPipeline = null, segLoading = false, segLoadPromise = null;
 let depthPipeline = null, depthLoading = false, depthLoadPromise = null;
 let transformersModulePromise = null;
+let lastSpatialDiagnostics = null, lastSpatialInferenceAt = 0;
+let lastAutoSpatialScanAt = 0, lastAutoSpatialKey = '';
+
 let phonePitchBeta = null, savedOutfitColor = null;
 
 let barcodeDetector = null;
@@ -592,37 +595,40 @@ const LOCAL_OBJECT_MAP = Object.freeze({
 });
 
 const ADE20K_CRITICAL = {
-  'wall':       { ar: 'حائط قريب',    minPct: 0.52, priority: 3 },
-  'door':       { ar: 'باب',          minPct: 0.025, priority: 2 },
-  'windowpane': { ar: 'شباك أو زجاج', minPct: 0.025, priority: 2 },
-  'stairs':     { ar: 'سلالم',        minPct: 0.020, priority: 3 },
-  'stairway':   { ar: 'سلم',          minPct: 0.020, priority: 3 },
-  'step':       { ar: 'درجة سلم',     minPct: 0.015, priority: 3 },
-  'banister':   { ar: 'درابزين سلم',  minPct: 0.012, priority: 2 },
-  'railing':    { ar: 'حاجز',         minPct: 0.015, priority: 2 },
-  'water':      { ar: 'مياه',         minPct: 0.020, priority: 3 },
-  'sidewalk':   { ar: 'رصيف مشاة',    minPct: 0.045, priority: 1 },
-  'road':       { ar: 'طريق سيارات',  minPct: 0.055, priority: 3 },
-  'mirror':     { ar: 'مرآة',         minPct: 0.025, priority: 1 },
-  'pole':       { ar: 'عمود',         minPct: 0.012, priority: 3 }
+  // minPct هي نسبة تغطية تقريبية من قناع التقسيم، وليست درجة ثقة للنموذج.
+  'wall':       { ar: 'حائط',          minPct: 0.025, priority: 3, kind: 'wall' },
+  'door':       { ar: 'باب',           minPct: 0.004, priority: 2, kind: 'door' },
+  'windowpane': { ar: 'زجاج أو نافذة', minPct: 0.004, priority: 2, kind: 'glass' },
+  'stairs':     { ar: 'سلالم',         minPct: 0.004, priority: 3, kind: 'stairs' },
+  'stairway':   { ar: 'سلم',           minPct: 0.004, priority: 3, kind: 'stairs' },
+  'staircase':  { ar: 'سلم',           minPct: 0.004, priority: 3, kind: 'stairs' },
+  'step':       { ar: 'درجة سلم',      minPct: 0.003, priority: 3, kind: 'stairs' },
+  'banister':   { ar: 'درابزين سلم',   minPct: 0.003, priority: 2, kind: 'rail' },
+  'railing':    { ar: 'حاجز',          minPct: 0.004, priority: 2, kind: 'rail' },
+  'water':      { ar: 'مياه',          minPct: 0.004, priority: 3, kind: 'water' },
+  'floor':      { ar: 'أرضية',         minPct: 0.025, priority: 1, kind: 'floor' },
+  'sidewalk':   { ar: 'رصيف مشاة',     minPct: 0.020, priority: 1, kind: 'floor' },
+  'road':       { ar: 'طريق سيارات',   minPct: 0.025, priority: 2, kind: 'road' },
+  'mirror':     { ar: 'مرآة',          minPct: 0.004, priority: 1, kind: 'surface' },
+  'pole':       { ar: 'عمود',          minPct: 0.003, priority: 3, kind: 'obstacle' }
 };
 
 const LIFE_MODES = {
   walk: {
     icon: '🛣️', title: 'فحص الطريق والسلالم والحفر',
     prompt: `أنت عين أمينة لشخص كفيف يسير في مصر. افحص الطريق والأرض بدقة متناهية:
-1) السلالم والعتبات: حدد صراحة هل السلم **صاعد للأعلى** أم **نازل للأسفل**، وأين الدرابزين (يمين/يسار).
-2) الحفر والبالوعات المفتوحة وتكسّر الرصيف.
-3) السوائل الخطرة: برك المياه، الزيت، الطين، أو البلاط المبلل.
-4) الحوائط القريبة، الأبواب المغلقة أو الزجاجية الشفافة، الفروع والتندات المنخفضة.
-5) المركبات (سيارة، توك توك، موتوسيكل) والأشخاص والمسافة التقريبية بالخطوات (خطوة ≈ 70 سم). لا تقل أبداً أن الطريق آمن.`
+1) السلالم والعتبات: اذكر وجود الدرج وموقعه. لا تحدد الصعود أو النزول إلا إذا ظهرت درجاته بوضوح.
+2) الحفر والبالوعات المفتوحة وتكسّر الرصيف: لا تجزم بوجودها من تغير بصري غامض وحده.
+3) السوائل الخطرة: برك المياه أو الزيت أو الطين عندما تظهر بوضوح.
+4) الحوائط والأبواب والزجاج والفروع والتندات المنخفضة، مع تحديد الموضع وذكر عدم اليقين.
+5) المركبات والأشخاص والأجسام التي قد تتداخل مع مجال السير. لا تخمّن المسافة بالأمتار أو الخطوات من صورة واحدة، ولا تقل أبداً أن الطريق آمن.`
   },
   home: {
     icon: '🚪', title: 'الأبواب والشبابيك والغرفة',
-    prompt: `صف المكان الداخلي للكفيف بالموضع والمسافة بالخطوات:
-1) الأبواب والحوائط: هل يوجد باب أو حائط أمامه؟ هل الباب مفتوح بالكامل أم موارب أم مغلق؟ زجاجي أم خشبي؟ وأين المقبض؟
-2) الشبابيك والسلالم (صاعد أم نازل).
-3) مخاطر المنزل: ماء أو زيت مسكوب، زجاج مكسور، سكين، شعلة بوتاجاز، أسلاك.`
+    prompt: `صف المكان الداخلي للكفيف بالموضع والعلاقات المكانية النسبية:
+1) الأبواب والحوائط: اذكر وجودها وموضعها. لا تجزم بأن الباب مفتوح أو مغلق إلا إذا كان ذلك واضحاً بصرياً.
+2) الشبابيك والسلالم: اذكر الموقع، ولا تخمّن اتجاه السلم أو المسافة بالمتر.
+3) مخاطر المنزل: ماء أو زيت مسكوب، زجاج مكسور، سكين، شعلة بوتاجاز، أسلاك. ميّز بوضوح بين ما تراه وما لا تستطيع تأكيده، ولا تقل إن المكان آمن.`
   },
   clothes: {
     icon: '👔', title: 'فحص الملابس والألوان والبقع',
@@ -643,7 +649,7 @@ const RESPONSE_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { category: { type: 'string' }, location: { type: 'string' }, distance_steps: { type: 'string' }, details: { type: 'string' } },
+        properties: { category: { type: 'string' }, location: { type: 'string' }, details: { type: 'string' } },
         required: ['category', 'location', 'details']
       }
     },
@@ -715,7 +721,7 @@ function refreshAssetButtonsState() {
   if (loadDepthBtn && !depthLoading) {
     loadDepthBtn.textContent = depthPipeline
       ? '✅ محرك العمق محمّل ونشط'
-      : (isSavedFlag(LS_DEPTH_READY) ? '✅ محرك العمق سبق تنزيله — جاهز دون إعادة تنزيل' : '📏 تحميل محرك العمق ثلاثي الأبعاد (Depth Anything — 27 ميجا)');
+      : (isSavedFlag(LS_DEPTH_READY) ? '✅ محرك العمق سبق تنزيله — جاهز دون إعادة تنزيل' : '📏 تحميل محرك تقدير العمق النسبي (Depth Anything — 27 ميجا)');
     loadDepthBtn.disabled = false;
   }
 }
@@ -1609,56 +1615,365 @@ async function analyzeLocalArchitecture() {
   } catch (e) { return []; }
 }
 
-async function runNeuralDepthAnalysis(archList = []) {
-  if (!depthPipeline && isSavedFlag(LS_DEPTH_READY)) { try { await ensureDepthPipeline(); } catch (e) { return null; } }
-  if (!depthPipeline) return null;
-  try {
-    captureFrame(384, 0.8);
-    const out = await depthPipeline(canvas.toDataURL('image/jpeg', 0.8));
-    const d = out?.depth; if (!d?.data) return null;
-    const w = d.width, h = d.height, ch = d.channels || 1, data = d.data;
-    const avg = (x0, y0, x1, y1) => {
-      let s = 0, c = 0;
-      for (let y = Math.floor(y0 * h); y < Math.floor(y1 * h); y += 2) for (let x = Math.floor(x0 * w); x < Math.floor(x1 * w); x += 2) { s += data[(y * w + x) * ch]; c++; }
-      return c ? s / c : 0;
-    };
-    const l = avg(0.05, 0.35, 0.33, 0.70), c = avg(0.34, 0.35, 0.66, 0.70), r = avg(0.67, 0.35, 0.95, 0.70);
-    const yFar = avg(0.30, 0.54, 0.70, 0.62), yMid = avg(0.30, 0.68, 0.70, 0.76), yNear = avg(0.30, 0.82, 0.70, 0.90);
-    const g1 = yMid - yFar, g2 = yNear - yMid, dropCliff = g2 - g1;
-    const alerts = [];
-    if (archList.some(a => a.includes('سلم')) && g1 > 8 && yFar > 110) alerts.push('درجات السلم تبدو مرتفعة أمامك (يُرجح صعود — تأكد بالعصا).');
-    if (l < r - 24) alerts.push('اليسار يبدو أبعد نسبياً.'); else if (r < l - 24) alerts.push('اليمين يبدو أبعد نسبياً.');
-    return alerts;
-  } catch (e) { return null; }
+/*
+ * محرك الإدراك المكاني المحلي:
+ * - يلتقط إطاراً واحداً ويستخدمه لجميع النماذج.
+ * - يستخدم predicted_depth (العمق العكسي النسبي) بدلاً من الاكتفاء بصورة depth الرمادية.
+ * - لا يحوّل القيم إلى أمتار ولا يعلن أن المسار آمن.
+ * - يشغّل النماذج بالتتابع لتقليل ذروة استهلاك الذاكرة والمعالج.
+ */
+async function captureSpatialSnapshot(maxDim = 448, quality = 0.82) {
+  if (!videoElement || videoElement.videoWidth <= 0 || videoElement.videoHeight <= 0 || videoElement.readyState < 2) {
+    throw new Error('الكاميرا لم تجهز لالتقاط صورة المكان.');
+  }
+  const vw = videoElement.videoWidth, vh = videoElement.videoHeight;
+  const scale = Math.min(1, maxDim / Math.max(vw, vh));
+  const shotCanvas = document.createElement('canvas');
+  shotCanvas.width = Math.max(1, Math.round(vw * scale));
+  shotCanvas.height = Math.max(1, Math.round(vh * scale));
+  const ctx = shotCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
+  if (!ctx) throw new Error('تعذر تجهيز صورة التحليل المكاني.');
+  ctx.drawImage(videoElement, 0, 0, shotCanvas.width, shotCanvas.height);
+  return {
+    canvas: shotCanvas,
+    dataUrl: shotCanvas.toDataURL('image/jpeg', quality),
+    width: shotCanvas.width,
+    height: shotCanvas.height,
+    capturedAt: Date.now(),
+    quality: probeFrameQuality()
+  };
 }
 
-function estimateObjectDistance(pred, vw, vh) {
-  const meta = LOCAL_OBJECT_MAP[pred.class]; if (!meta || !pred.bbox || !vw || !vh) return null;
-  const [bx, by, bw, bh] = pred.bbox;
-  const topTouch = by <= vh * 0.03, botTouch = (by + bh) >= vh * 0.97;
-  if (topTouch && botTouch) return { meters: 0.7, steps: 1, text: 'قريب جداً (أقل من خطوتين)' };
-  const isPortrait = vh > vw, tanHalfV = isPortrait ? 0.65 : 0.50, tanHalfH = tanHalfV * (vw / vh);
-  let distM = null;
-  if (meta.h && !topTouch && !botTouch) distM = (meta.h * vh) / (2 * Math.max(1, bh) * tanHalfV);
-  else if (meta.w && bx > vw * 0.03 && (bx + bw) < vw * 0.97) distM = (meta.w * vw) / (2 * Math.max(1, bw) * tanHalfH);
-  else if (meta.h) distM = Math.min((meta.h * vh) / (2 * Math.max(1, bh) * tanHalfV), 1.4);
-  if (!distM || !isFinite(distM)) return null;
-  distM = Math.max(0.4, Math.min(20, distM * 0.92));
-  const steps = Math.max(1, Math.round(distM / STEP_METERS));
-  if (distM < 1.0) return { meters: distM, steps: 1, text: 'قريب جداً (نحو خطوة)' };
-  if (distM < 1.8) return { meters: distM, steps: 2, text: 'نحو خطوتين (متر ونصف)' };
-  const mr = Math.round(distM * 2) / 2;
-  return { meters: mr, steps, text: 'نحو ' + steps + (steps <= 10 ? ' خطوات' : ' خطوة') + ' (' + mr + ' متر)' };
+function getTensorSpatialShape(tensor) {
+  const dims = Array.isArray(tensor?.dims) ? tensor.dims : [];
+  if (dims.length >= 2) {
+    const h = Number(dims[dims.length - 2]);
+    const w = Number(dims[dims.length - 1]);
+    if (w > 0 && h > 0 && tensor?.data?.length >= w * h) return { width: w, height: h };
+  }
+  return null;
 }
+
+function createRelativeDepthInfo(output) {
+  // Transformers.js يوفّر predicted_depth كقيم float32، وdepth كصورة رمادية للعرض.
+  // Depth Anything V2 ينتج عمقاً عكسياً نسبياً: القيمة الأكبر تعني أقرب نسبياً.
+  const tensor = output?.predicted_depth;
+  let data = tensor?.data, shape = getTensorSpatialShape(tensor), source = 'predicted_depth';
+  if (!data || !shape) {
+    const image = output?.depth;
+    if (image?.data && image.width && image.height) {
+      data = image.data;
+      shape = { width: image.width, height: image.height };
+      source = 'depth_visual_fallback';
+    }
+  }
+  if (!data || !shape) return null;
+
+  const vals = [];
+  const step = Math.max(1, Math.floor(Math.sqrt((shape.width * shape.height) / 36000)));
+  for (let y = 0; y < shape.height; y += step) {
+    for (let x = 0; x < shape.width; x += step) {
+      const v = Number(data[y * shape.width + x]);
+      if (Number.isFinite(v)) vals.push(v);
+    }
+  }
+  if (vals.length < 100) return null;
+  vals.sort((a, b) => a - b);
+  const quantile = q => vals[Math.min(vals.length - 1, Math.max(0, Math.floor(q * (vals.length - 1))))];
+  const p05 = quantile(0.05), p50 = quantile(0.50), p95 = quantile(0.95);
+  if (!Number.isFinite(p05) || !Number.isFinite(p95) || (p95 - p05) < 1e-7) return null;
+
+  const read = (nx, ny) => {
+    const x = Math.max(0, Math.min(shape.width - 1, Math.round(nx * (shape.width - 1))));
+    const y = Math.max(0, Math.min(shape.height - 1, Math.round(ny * (shape.height - 1))));
+    const v = Number(data[y * shape.width + x]);
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, (v - p05) / (p95 - p05))) : null;
+  };
+  const regionScore = (x0, y0, x1, y1) => {
+    const region = [];
+    const sx = Math.max(1, Math.floor((x1 - x0) * shape.width / 15));
+    const sy = Math.max(1, Math.floor((y1 - y0) * shape.height / 12));
+    for (let y = Math.floor(y0 * shape.height); y < Math.max(1, Math.floor(y1 * shape.height)); y += sy) {
+      for (let x = Math.floor(x0 * shape.width); x < Math.max(1, Math.floor(x1 * shape.width)); x += sx) {
+        const v = read(x / Math.max(1, shape.width - 1), y / Math.max(1, shape.height - 1));
+        if (v !== null) region.push(v);
+      }
+    }
+    if (!region.length) return null;
+    region.sort((a, b) => a - b);
+    return region[Math.floor(region.length / 2)];
+  };
+  return { data, width: shape.width, height: shape.height, source, p05, p50, p95, read, regionScore };
+}
+
+function spatialDepthLabel(score) {
+  if (!Number.isFinite(score)) return '';
+  if (score >= 0.70) return 'أقرب نسبياً من أجزاء أخرى في الصورة';
+  if (score <= 0.30) return 'أبعد نسبياً في الصورة';
+  return 'في نطاق متوسط نسبياً داخل الصورة';
+}
+
+function analyzeSemanticMasks(output) {
+  const segments = [];
+  if (!Array.isArray(output)) return segments;
+  for (const item of output) {
+    const label = String(item?.label || '').toLowerCase().trim();
+    const meta = ADE20K_CRITICAL[label];
+    const mask = item?.mask;
+    if (!meta || !mask?.data || !mask.width || !mask.height) continue;
+    const w = mask.width, h = mask.height, ch = mask.channels || 1, data = mask.data;
+    let maxValue = 0;
+    for (let i = 0; i < Math.min(data.length, 5000); i += Math.max(1, Math.floor(data.length / 5000))) {
+      const n = Number(data[i]); if (Number.isFinite(n) && n > maxValue) maxValue = n;
+    }
+    const threshold = maxValue <= 1.01 ? 0.5 : 127;
+    const grid = Array.from({ length: 3 }, () => Array(5).fill(0));
+    const gridSamples = Array.from({ length: 3 }, () => Array(5).fill(0));
+    let matched = 0, sampled = 0, sumX = 0, sumY = 0, minX = w, minY = h, maxX = 0, maxY = 0;
+    const stride = Math.max(2, Math.floor(Math.max(w, h) / 140));
+    for (let y = 0; y < h; y += stride) {
+      const row = y / h < 0.38 ? 0 : (y / h < 0.68 ? 1 : 2);
+      for (let x = 0; x < w; x += stride) {
+        const col = Math.min(4, Math.floor((x / w) * 5));
+        gridSamples[row][col]++;
+        sampled++;
+        const raw = Number(data[(y * w + x) * ch]);
+        if (!Number.isFinite(raw) || raw <= threshold) continue;
+        matched++; grid[row][col]++; sumX += x; sumY += y;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    const coverage = matched / Math.max(1, sampled);
+    if (coverage < (meta.minPct || 0.01) || !matched) continue;
+    const cx = sumX / matched / w, cy = sumY / matched / h;
+    segments.push({
+      label, ar: meta.ar, kind: meta.kind || 'surface', priority: meta.priority || 1,
+      coverage, cx, cy,
+      box: { x0: minX / w, y0: minY / h, x1: maxX / w, y1: maxY / h },
+      grid: grid.map((r, ri) => r.map((v, ci) => v / Math.max(1, gridSamples[ri][ci]))),
+      mask
+    });
+  }
+  return segments.sort((a, b) => b.priority - a.priority || b.coverage - a.coverage);
+}
+
+function getMaskRelativeDepth(segment, depthInfo) {
+  if (!depthInfo || !segment?.mask?.data) return null;
+  const mask = segment.mask, w = mask.width, h = mask.height, ch = mask.channels || 1, data = mask.data;
+  let maxValue = 0;
+  for (let i = 0; i < Math.min(data.length, 2000); i += Math.max(1, Math.floor(data.length / 2000))) {
+    const n = Number(data[i]); if (Number.isFinite(n) && n > maxValue) maxValue = n;
+  }
+  const threshold = maxValue <= 1.01 ? 0.5 : 127;
+  const vals = [];
+  const stride = Math.max(3, Math.floor(Math.max(w, h) / 90));
+  for (let y = 0; y < h; y += stride) for (let x = 0; x < w; x += stride) {
+    const m = Number(data[(y * w + x) * ch]);
+    if (Number.isFinite(m) && m > threshold) {
+      const score = depthInfo.read(x / Math.max(1, w - 1), y / Math.max(1, h - 1));
+      if (score !== null) vals.push(score);
+    }
+  }
+  if (vals.length < 5) return null;
+  vals.sort((a, b) => a - b);
+  return vals[Math.floor(vals.length / 2)];
+}
+
+function getBoxRelativeDepth(box, depthInfo) {
+  if (!depthInfo || !box) return null;
+  return depthInfo.regionScore(box.x0, box.y0, box.x1, box.y1);
+}
+
+function spatialPositionArabic(cx) {
+  return cx < 0.36 ? 'على اليسار' : (cx > 0.64 ? 'على اليمين' : 'أمامك');
+}
+
+function analyzeFloorVisibility(segments, objects) {
+  const floor = segments.find(s => s.kind === 'floor');
+  if (!floor) return '';
+  const near = floor.grid[2];
+  const hazardousKinds = new Set(['wall', 'stairs', 'water', 'obstacle', 'glass', 'road']);
+  const blockers = segments.filter(s => hazardousKinds.has(s.kind));
+  const sideColumns = {
+    'اليسار': [0, 1],
+    'الوسط': [2],
+    'اليمين': [3, 4]
+  };
+  const sideScores = Object.fromEntries(Object.entries(sideColumns).map(([side, cols]) => {
+    const floorScore = cols.reduce((sum, col) => sum + near[col], 0) / cols.length;
+    const blocked = blockers.some(segment => cols.some(col => segment.grid[2][col] >= 0.08));
+    const objectBlocked = (objects || []).some(obj => obj.box?.y1 >= 0.62 && cols.some(col => {
+      const left = col / 5, right = (col + 1) / 5;
+      return obj.box.x0 < right && obj.box.x1 > left;
+    }));
+    return [side, (!blocked && !objectBlocked) ? floorScore : 0];
+  }));
+  const ranked = Object.entries(sideScores)
+    .filter(([, score]) => score >= 0.08)
+    .sort((a, b) => b[1] - a[1]);
+  if (!ranked.length) return '';
+  const best = ranked[0];
+  if (best[1] < 0.10) return '';
+  return 'تظهر أرضية في الجهة ' + best[0] + ' ضمن الصورة؛ هذا وصف بصري فقط وليس تأكيداً لسلامة المرور.';
+}
+
+async function analyzeSpatialScene(lightQuality = null) {
+  const startedAt = performance.now();
+  const snapshot = await captureSpatialSnapshot(448, 0.82);
+  const quality = lightQuality || snapshot.quality;
+  if (quality?.isLensCovered) return { report: 'يبدو أن إصبعك يغطي العدسة؛ أبعد يدك وأعد فحص المكان.', risk: 'تعذر التحقق', diagnostics: null };
+  if (quality?.isVeryDark) return { report: 'المكان مظلم جداً، لذلك لا أستطيع تكوين وصف مكاني موثوق. حسّن الإضاءة وأعد الفحص.', risk: 'تعذر التحقق', diagnostics: null };
+
+  // استعادة النماذج المحفوظة فقط؛ لا يبدأ هذا الزر تنزيل نماذج ثقيلة دون طلب المستخدم من الإعدادات.
+  let segAvailable = !!segPipeline, depthAvailable = !!depthPipeline;
+  if (!segAvailable && isSavedFlag(LS_SEG_READY)) { try { await ensureSegFormerPipeline(); segAvailable = !!segPipeline; } catch (e) {} }
+  if (!depthAvailable && isSavedFlag(LS_DEPTH_READY)) { try { await ensureDepthPipeline(); depthAvailable = !!depthPipeline; } catch (e) {} }
+
+  const results = { objects: [], segments: [], depthInfo: null, objectInferenceOk: false, segmentationOk: false, depthInferenceOk: false };
+  const timings = {};
+  // الخفيف أولاً، ثم النموذجان الثقيلان بالتتابع وعلى الصورة نفسها.
+  const objectStart = performance.now();
+  try {
+    const model = await initLocalObjectEngine();
+    if (model) {
+      const preds = await model.detect(snapshot.canvas, 8, 0.42);
+      results.objectInferenceOk = Array.isArray(preds);
+      results.objects = (preds || [])
+        .filter(p => LOCAL_OBJECT_MAP[p.class] && Number(p.score || 0) >= 0.42 && Array.isArray(p.bbox))
+        .map(p => {
+          const [x, y, w, h] = p.bbox;
+          const box = {
+            x0: Math.max(0, x / snapshot.width), y0: Math.max(0, y / snapshot.height),
+            x1: Math.min(1, (x + w) / snapshot.width), y1: Math.min(1, (y + h) / snapshot.height)
+          };
+          const cx = (box.x0 + box.x1) / 2;
+          const position = spatialPositionArabic(cx);
+          const pathCandidate = cx >= 0.28 && cx <= 0.72 && box.y1 >= 0.58 && (w * h) / (snapshot.width * snapshot.height) >= 0.004;
+          return { class: p.class, ar: LOCAL_OBJECT_MAP[p.class].ar, score: Number(p.score) || 0, box, cx, position, pathCandidate, area: (w * h) / (snapshot.width * snapshot.height) };
+        })
+        .sort((a, b) => (Number(b.pathCandidate) - Number(a.pathCandidate)) || (b.score - a.score))
+        .slice(0, 8);
+    }
+  } catch (e) { results.objectError = String(e?.message || e); }
+  timings.objectsMs = Math.round(performance.now() - objectStart);
+
+  if (segAvailable && segPipeline) {
+    const segStart = performance.now();
+    try { const segOutput = await segPipeline(snapshot.dataUrl); results.segmentationOk = Array.isArray(segOutput); results.segments = analyzeSemanticMasks(segOutput); }
+    catch (e) { results.segError = String(e?.message || e); }
+    timings.segmentationMs = Math.round(performance.now() - segStart);
+  }
+  if (depthAvailable && depthPipeline) {
+    const depthStart = performance.now();
+    try {
+      const output = await depthPipeline(snapshot.dataUrl);
+      results.depthInfo = createRelativeDepthInfo(output);
+      results.depthInferenceOk = !!results.depthInfo;
+    } catch (e) { results.depthError = String(e?.message || e); }
+    timings.depthMs = Math.round(performance.now() - depthStart);
+  }
+
+  if (results.depthInfo) {
+    for (const obj of results.objects) obj.depthScore = getBoxRelativeDepth(obj.box, results.depthInfo);
+    for (const segment of results.segments) segment.depthScore = getMaskRelativeDepth(segment, results.depthInfo);
+  }
+
+  const descriptions = [];
+  let risk = (results.objectInferenceOk && results.segmentationOk && results.depthInferenceOk)
+    ? 'لم يظهر خطر واضح في الصورة' : 'تعذر التحقق';
+  const urgentSemantic = results.segments.filter(s => ['stairs', 'water'].includes(s.kind) && s.cy > 0.42);
+  if (urgentSemantic.length) risk = 'يستلزم الحذر';
+
+  const semanticGroups = new Set();
+  for (const segment of results.segments) {
+    if (segment.kind === 'floor' || segment.kind === 'rail' || segment.kind === 'surface') continue;
+    const pos = spatialPositionArabic(segment.cx);
+    const depthText = spatialDepthLabel(segment.depthScore);
+    const key = segment.kind + ':' + (pos === 'أمامك' ? 'center' : pos);
+    if (semanticGroups.has(key)) continue;
+    semanticGroups.add(key);
+
+    if (segment.kind === 'wall') {
+      const crossesCenter = segment.box.x0 < 0.73 && segment.box.x1 > 0.27;
+      if (pos === 'أمامك' || crossesCenter) {
+        descriptions.push('يظهر حائط في الجزء الأمامي من الصورة' + (depthText ? '، و' + depthText : '') + '.');
+        if (segment.depthScore !== null && segment.depthScore >= 0.72) risk = 'يستلزم الحذر';
+      } else descriptions.push('يظهر حائط ' + pos + (depthText ? '، و' + depthText : '') + '.');
+    } else if (segment.kind === 'door') {
+      descriptions.push('يظهر باب ' + pos + '. لا يمكنني الجزم من هذه الصورة وحدها إن كان مفتوحاً أو مغلقاً.');
+    } else if (segment.kind === 'glass') {
+      descriptions.push('تظهر نافذة أو مساحة زجاجية محتملة ' + pos + '؛ تعامل معها بحذر.');
+      if (pos === 'أمامك' && segment.cy > 0.45) risk = 'يستلزم الحذر';
+    } else if (segment.kind === 'stairs') {
+      descriptions.push('تظهر درجات أو سلالم ' + pos + '. اتجاه الصعود أو النزول غير مؤكد من هذا التحليل.');
+      if (segment.cy > 0.40) risk = 'يستلزم الحذر';
+    } else if (segment.kind === 'water') {
+      descriptions.push('تظهر منطقة قد تكون مياه ' + pos + '.');
+      if (segment.cy > 0.40) risk = 'يستلزم الحذر';
+    } else if (segment.kind === 'obstacle') {
+      descriptions.push('يظهر عمود أو جسم رأسي ' + pos + '.');
+      if (pos === 'أمامك' && segment.cy > 0.45) risk = 'يستلزم الحذر';
+    } else if (segment.kind === 'road') {
+      descriptions.push('تظهر منطقة مصنفة كطريق سيارات ' + pos + '.');
+    }
+    if (descriptions.length >= 5) break;
+  }
+
+  const objectReports = [];
+  for (const obj of results.objects.slice(0, 5)) {
+    const depthText = spatialDepthLabel(obj.depthScore);
+    if (obj.pathCandidate) {
+      objectReports.push(obj.ar + ' في المنطقة الوسطى الأمامية، وقد يشغل جزءاً من مجال السير الظاهر' + (depthText ? '، و' + depthText : '') + '.');
+      if (obj.depthScore === null || obj.depthScore >= 0.42 || obj.score >= 0.72) risk = 'يستلزم الحذر';
+    } else {
+      objectReports.push(obj.ar + ' ' + obj.position + (depthText ? '، و' + depthText : '') + '.');
+    }
+  }
+  descriptions.push(...objectReports);
+
+  const floorHint = analyzeFloorVisibility(results.segments, results.objects);
+  if (floorHint) descriptions.push(floorHint);
+
+  if (!segAvailable) descriptions.push('نموذج فهم الحوائط والأبواب والسلالم غير جاهز؛ فعّله من الإعدادات لتحليل معالم المكان.');
+  if (!depthAvailable) descriptions.push('محرك العمق غير جاهز؛ فعّله من الإعدادات لإضافة ترتيب القرب النسبي.');
+  if (depthAvailable && !results.depthInfo) descriptions.push('تعذر استخراج خريطة العمق الرقمية في هذه اللقطة؛ لم أقدّر القرب المكاني.');
+  if (!results.segments.length && segAvailable) descriptions.push('لم يتعرف نموذج تقسيم المشهد على معلم مكاني واضح في هذه الصورة.');
+  if (!results.objects.length && !results.segments.length) descriptions.push('لم أرصد جسماً أو معلماً واضحاً في الصورة. هذا لا يعني أن الطريق خالٍ أو آمن.');
+  if (!results.objectInferenceOk || !results.segmentationOk || !results.depthInferenceOk) {
+    // فشل نموذج لا يجوز أن يمحو تحذيراً مدعوماً بأدلة من نموذج آخر.
+    risk = (risk === 'يستلزم الحذر' || urgentSemantic.length) ? 'يستلزم الحذر' : 'تعذر التحقق';
+  }
+
+  const reportParts = descriptions.slice(0, 7);
+  reportParts.push('هذا تحليل بصري تقريبي لصورة واحدة، وليس قياساً بالمتر أو ضماناً لسلامة المسار. استخدم العصا البيضاء وتحقق قبل الحركة.');
+  const diagnostics = {
+    capturedAt: snapshot.capturedAt,
+    dimensions: [snapshot.width, snapshot.height],
+    models: { objects: results.objectInferenceOk, segmentation: results.segmentationOk, depth: results.depthInferenceOk },
+    inferenceCompleted: { objects: results.objectInferenceOk, segmentation: results.segmentationOk, depth: results.depthInferenceOk },
+    counts: { objects: results.objects.length, semanticRegions: results.segments.length },
+    timings,
+    totalMs: Math.round(performance.now() - startedAt),
+    depthSource: results.depthInfo?.source || null,
+    depthRange: results.depthInfo ? [Number(results.depthInfo.p05.toFixed(4)), Number(results.depthInfo.p95.toFixed(4))] : null,
+    errors: { object: results.objectError || null, segmentation: results.segError || null, depth: results.depthError || null }
+  };
+  lastSpatialDiagnostics = diagnostics;
+  lastSpatialInferenceAt = Date.now();
+  try { console.info('[Sanad Spatial Diagnostics]', diagnostics); } catch (e) {}
+  return { report: reportParts.join(' '), risk, diagnostics };
+}
+
 
 async function initLocalObjectEngine() {
-  if (!localScanEnabled) { localScannerBadge.textContent = 'الأجسام والمسافة: متوقفة'; return null; }
+  if (!localScanEnabled) { localScannerBadge.textContent = 'رصد الأجسام: متوقف'; return null; }
   if (objectModel) return objectModel;
   if (objectModelLoading) return objectModelLoading;
   if (typeof cocoSsd === 'undefined') { localScannerBadge.textContent = 'الأجسام: غير متاحة'; return null; }
-  localScannerBadge.textContent = 'الأجسام والمسافة: جارٍ التحميل...';
+  localScannerBadge.textContent = 'رصد الأجسام: جارٍ التحميل...';
   objectModelLoading = cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(m => {
-    objectModel = m; localScannerBadge.textContent = 'الأجسام والمسافة: نشط'; return m;
+    objectModel = m; localScannerBadge.textContent = 'رصد الأجسام: نشط'; return m;
   }).catch(() => { localScannerBadge.textContent = 'الأجسام: تعذر التحميل'; return null; });
   return objectModelLoading;
 }
@@ -1684,10 +1999,47 @@ function startLiveMonitoring() {
       const preds = await objectModel.detect(videoElement, 5, 0.56);
       const objects = (preds || []).filter(p => LOCAL_OBJECT_MAP[p.class])
         .sort((a, b) => ((LOCAL_OBJECT_MAP[b.class].priority || 1) - (LOCAL_OBJECT_MAP[a.class].priority || 1)) || ((b.score || 0) - (a.score || 0)));
+      const now = Date.now();
+      // تدقيق عميق قائم على الحدث: لا يعمل دورياً؛ يعمل فقط عند ظهور جسم واضح
+      // في المنطقة الأمامية، بشرط أن يكون النموذجان الثقيلان محمّلين بالفعل.
+      const spatialCandidate = objects.find(p => {
+        if ((Number(p.score) || 0) < 0.68 || !Array.isArray(p.bbox) || (LOCAL_OBJECT_MAP[p.class]?.priority || 1) < 2) return false;
+        const [bx, by, bw, bh] = p.bbox;
+        const cx = (bx + bw / 2) / videoElement.videoWidth;
+        const bottom = (by + bh) / videoElement.videoHeight;
+        const areaRatio = (bw * bh) / (videoElement.videoWidth * videoElement.videoHeight);
+        return cx >= 0.28 && cx <= 0.72 && bottom >= 0.62 && areaRatio >= 0.006;
+      });
+      if (!spatialCandidate) lastAutoSpatialKey = '';
+      let spatialWarningSpoken = false;
+      if (spatialCandidate && segPipeline && depthPipeline && (now - lastAutoSpatialScanAt) >= 18000) {
+        const candidatePos = getRelativePositionArabic(spatialCandidate.bbox, videoElement.videoWidth);
+        const candidateArea = spatialCandidate.bbox[2] * spatialCandidate.bbox[3] / (videoElement.videoWidth * videoElement.videoHeight);
+        const spatialKey = spatialCandidate.class + '_' + candidatePos + '_' + Math.round(candidateArea * 10);
+        if (spatialKey !== lastAutoSpatialKey) {
+          lastAutoSpatialKey = spatialKey;
+          lastAutoSpatialScanAt = now;
+          isProcessing = true;
+          try {
+            const spatialResult = await analyzeSpatialScene(q);
+            if (spatialResult.risk === 'يستلزم الحذر') {
+              updateRiskIndicator(spatialResult.risk);
+              lastDescription = spatialResult.report;
+              updateStatus(spatialResult.report);
+              // التنبيه الآلي مختصر حتى لا يطيل الكلام أثناء السير.
+              const compact = spatialResult.report.split(/(?<=\.)\s+/).slice(0, 2).join(' ');
+              speak(compact || 'أعدت فحص المشهد، وما زال هناك ما يستلزم الحذر. تحقق بعصاك.', true);
+              spatialWarningSpoken = true;
+            }
+          } catch (e) {
+            try { console.warn('[Sanad Spatial Auto Scan]', e); } catch (ignore) {}
+          } finally { isProcessing = false; }
+        }
+      }
       const top = objects[0];
       if (!top) { prevCenterThreat = null; return; }
       const meta = LOCAL_OBJECT_MAP[top.class], pos = getRelativePositionArabic(top.bbox, videoElement.videoWidth);
-      const dist = estimateObjectDistance(top, videoElement.videoWidth, videoElement.videoHeight), area = top.bbox[2] * top.bbox[3], now = Date.now();
+      const area = top.bbox[2] * top.bbox[3];
       let loomingUrgent = false;
       if (meta.priority >= 3 && pos === 'أمامك') {
         if (prevCenterThreat && prevCenterThreat.cls === top.class && (now - prevCenterThreat.t) < 2000 && prevCenterThreat.area > 0 && ((area - prevCenterThreat.area) / prevCenterThreat.area) >= 0.34) loomingUrgent = true;
@@ -1696,11 +2048,15 @@ function startLiveMonitoring() {
       const key = (loomingUrgent ? 'LOOM_' : 'obj_') + top.class + '_' + pos;
       if (loomingUrgent || key !== lastHazardAlertKey || (now - lastHazardAlertTime) > 6500) {
         lastHazardAlertKey = key; lastHazardAlertTime = now;
-        const urgent = loomingUrgent || meta.priority >= 3 || (dist && dist.steps <= 2);
+        const areaRatio = area / Math.max(1, videoElement.videoWidth * videoElement.videoHeight);
+        const urgent = loomingUrgent || meta.priority >= 3 || (pos === 'أمامك' && areaRatio >= 0.008);
         playSpatialBeep(sideFromPosition(pos), urgent);
         vibrate(loomingUrgent ? [120, 45, 120, 45, 120] : (urgent ? [85, 55, 85] : [35]));
-        const msg = loomingUrgent ? ('انتبه! ' + meta.ar + ' تقترب منك بسرعة ' + (dist ? ('— ' + dist.text) : '') + '!') : (meta.ar + ' ' + pos + (dist ? (' — ' + dist.text) : '') + '.');
-        updateStatus(msg); updateRiskIndicator(urgent ? 'يستلزم الحذر' : 'لم يظهر خطر واضح في الصورة'); speak(msg, true);
+        const msg = loomingUrgent ? ('انتبه! ' + meta.ar + ' يزداد حجمه في الصورة بسرعة؛ تحقق من المسار!') : (meta.ar + ' ' + pos + '.');
+        if (!spatialWarningSpoken) {
+          updateStatus(msg); updateRiskIndicator(urgent ? 'يستلزم الحذر' : 'تعذر التحقق');
+          speak(msg, true);
+        }
       }
     } catch (e) {} finally { isScanningFrame = false; }
   }, 1200);
@@ -1709,30 +2065,29 @@ function stopLiveMonitoring() { if (liveMonitorTimer) { clearInterval(liveMonito
 function setNavMode(on, announce) {
   navModeEnabled = !!on; writeLS(LS_NAV_MODE, navModeEnabled);
   if (navModeCheckbox) navModeCheckbox.checked = navModeEnabled;
-  if (navHint) navHint.textContent = navModeEnabled ? 'تنبيهات السير بالخطوات نشطة (لا تغني عن العصا)' : 'التنبيهات المستمرة متوقفة';
+  if (navHint) navHint.textContent = navModeEnabled ? 'تنبيهات رصد الأجسام نشطة (لا تغني عن العصا)' : 'التنبيهات المستمرة متوقفة';
   if (announce) speak(navModeEnabled ? 'تم تشغيل التنبيهات المستمرة.' : 'تم إيقاف التنبيهات المستمرة.');
 }
 
 async function measureDistanceNow() {
   if (isProcessing) return;
   isProcessing = true; vibrate(35); playAckTone();
+  updateStatus('ألتقط صورة واحدة، ثم أحلل الأجسام والحوائط والفتحات والدرجات والعمق معاً...');
   try {
     await withAutoTorchForCapture(async (q) => {
-      if (q?.isVeryDark) { const m = 'المكان مظلم جداً؛ جرّب زر «وطواط الظلام» لفحص الحوائط والأبواب المغلقة.'; updateStatus(m); speak(m); return; }
-      const model = await initLocalObjectEngine(), lines = [];
-      if (model && videoElement.videoWidth) {
-        for (const o of (await model.detect(videoElement, 6, 0.45) || []).filter(p => LOCAL_OBJECT_MAP[p.class]).slice(0, 3)) {
-          const meta = LOCAL_OBJECT_MAP[o.class], pos = getRelativePositionArabic(o.bbox, videoElement.videoWidth), dist = estimateObjectDistance(o, videoElement.videoWidth, videoElement.videoHeight);
-          lines.push(meta.ar + ' ' + pos + (dist ? (' ' + dist.text) : '') + '.');
-        }
+      if (q?.isLensCovered || q?.isVeryDark) {
+        const m = q.isLensCovered ? 'يبدو أن إصبعك يغطي العدسة؛ أبعد يدك وأعد الفحص.' : 'المكان مظلم جداً؛ حسّن الإضاءة ثم أعد فحص المكان.';
+        updateRiskIndicator('تعذر التحقق'); updateStatus(m); speak(m); return;
       }
-      const arch = await analyzeLocalArchitecture(); if (arch.length) lines.push('معالم المكان: ' + arch.join('، ') + '.');
-      const depth = await runNeuralDepthAnalysis(arch); if (depth?.length) lines.push(...depth);
-      const visualWall = checkCloseVisualWallFallback(q); if (!lines.length && visualWall) lines.push(visualWall);
-      if (!lines.length) lines.push('لم أرصد أجساماً معروفة. جرّب «وطواط الظلام» للحوائط والأبواب أو فعّل SegFormer.');
-      lines.push('تأكد بعصاك دائماً.');
-      const msg = lines.join(' '); lastDescription = msg; updateStatus(msg); speak(msg);
+      const result = await analyzeSpatialScene(q);
+      updateRiskIndicator(result.risk || 'تعذر التحقق');
+      lastDescription = result.report;
+      updateStatus(result.report);
+      speak(result.report);
     });
+  } catch (e) {
+    const msg = 'تعذر تحليل المكان الآن. ' + (e?.message || 'أعد المحاولة بعد التأكد من الكاميرا والنماذج.');
+    updateRiskIndicator('تعذر التحقق'); updateStatus(msg); speak(msg);
   } finally { isProcessing = false; }
 }
 
@@ -2336,13 +2691,13 @@ async function buildLocalSceneReport(objects, archList, depthAlerts, lightQualit
   if (archList.length) parts.push('معالم المكان: ' + archList.join('، ') + '.');
   if (objects.length) {
     parts.push('الأجسام: ' + objects.slice(0, 4).map(p => {
-      const m = LOCAL_OBJECT_MAP[p.class], pos = getRelativePositionArabic(p.bbox, videoElement.videoWidth), d = estimateObjectDistance(p, videoElement.videoWidth, videoElement.videoHeight);
-      return m.ar + ' ' + pos + (d ? (' (' + d.text + ')') : '');
+      const m = LOCAL_OBJECT_MAP[p.class], pos = getRelativePositionArabic(p.bbox, videoElement.videoWidth);
+      return m.ar + ' ' + pos;
     }).join('، ') + '.');
   }
   if (depthAlerts?.length) parts.push(...depthAlerts);
   if (!parts.length && visualWall) parts.push(visualWall);
-  if (!parts.length) parts.push('لم أرصد عوائق معروفة أمام الكاميرا.');
+  if (!parts.length) parts.push('لم أرصد عوائق معروفة في الصورة؛ هذا لا يعني أن الطريق خالٍ أو آمن.');
   parts.push('استعن بعصاك دائماً.');
   return parts.join(' ');
 }
@@ -2364,7 +2719,7 @@ async function captureAndAnalyze(customQuestion = null) {
         updateRiskIndicator('تعذر التحقق'); updateStatus(m); speak(m); return;
       }
       let objects = [], modelRan = false;
-      if (localScanEnabled && objectModel && videoElement.videoWidth > 0 && lifeMode !== 'grooming' && lifeMode !== 'clothes') {
+      if (localScanEnabled && objectModel && videoElement.videoWidth > 0 && lifeMode !== 'grooming' && lifeMode !== 'clothes' && lifeMode !== 'walk' && lifeMode !== 'home') {
         const preds = await objectModel.detect(videoElement, 6, 0.50); modelRan = true;
         objects = (preds || []).filter(p => LOCAL_OBJECT_MAP[p.class]).sort((a, b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]));
       }
@@ -2374,16 +2729,26 @@ async function captureAndAnalyze(customQuestion = null) {
         try {
           const b64 = captureFrame(MAX_DIM, 0.84);
           const promptText = LIFE_MODES[lifeMode].prompt + '\n' + (customQuestion ? ('سؤال المستخدم: ' + customQuestion) : 'حلل الصورة بدقة.') +
-            '\nأعد JSON فقط بهذا الشكل: {"risk_level":"خطر ظاهر|يستلزم الحذر|لم يظهر خطر واضح في الصورة","risk_summary":"...","hazards":[{"category":"...","location":"...","distance_steps":"...","details":"..."}],"scene_description":"...","request_answer":"...","uncertainty":"..."}';
+            '\nأعد JSON فقط بهذا الشكل: {"risk_level":"خطر ظاهر|يستلزم الحذر|لم يظهر خطر واضح في الصورة","risk_summary":"...","hazards":[{"category":"...","location":"...","details":"..."}],"scene_description":"...","request_answer":"...","uncertainty":"..."}';
           spoken = formatCloudStructured(await callCloudStructured(b64, promptText), !!customQuestion);
         } catch (err) {
-          const arch = await analyzeLocalArchitecture();
-          spoken = await buildLocalSceneReport(objects, arch, await runNeuralDepthAnalysis(arch), q, modelRan, selfieCheck);
+          if (lifeMode === 'walk' || lifeMode === 'home') {
+            const spatial = await analyzeSpatialScene(q);
+            spoken = spatial.report;
+            updateRiskIndicator(spatial.risk || 'تعذر التحقق');
+          } else {
+            spoken = await buildLocalSceneReport([], [], null, q, false, selfieCheck);
+          }
           if (customQuestion) spoken = 'تعذر الاتصال السحابي. محلياً: ' + spoken;
         }
       } else {
-        const arch = await analyzeLocalArchitecture();
-        spoken = await buildLocalSceneReport(objects, arch, await runNeuralDepthAnalysis(arch), q, modelRan, selfieCheck);
+        if (lifeMode === 'walk' || lifeMode === 'home') {
+          const spatial = await analyzeSpatialScene(q);
+          spoken = spatial.report;
+          updateRiskIndicator(spatial.risk || 'تعذر التحقق');
+        } else {
+          spoken = await buildLocalSceneReport([], [], null, q, false, selfieCheck);
+        }
         if (customQuestion) spoken = 'الأسئلة الحرة تحتاج ربط الخادم المجاني أو مفتاحاً. محلياً: ' + spoken;
       }
       lastDescription = spoken; updateStatus(spoken); speak(spoken);
@@ -2397,7 +2762,7 @@ function formatCloudStructured(data, isQ) {
   if (!data || typeof data === 'string') return cleanText(data);
   const level = ['خطر ظاهر', 'يستلزم الحذر', 'لم يظهر خطر واضح في الصورة'].includes(data.risk_level) ? data.risk_level : 'يستلزم الحذر';
   updateRiskIndicator(level);
-  const hz = (Array.isArray(data.hazards) ? data.hazards : []).slice(0, 4).map(h => cleanText(h.category || 'تنبيه') + ' ' + cleanText(h.location || '') + (h.distance_steps ? (' (' + cleanText(h.distance_steps) + ')') : '') + ': ' + cleanText(h.details || ''));
+  const hz = (Array.isArray(data.hazards) ? data.hazards : []).slice(0, 4).map(h => cleanText(h.category || 'تنبيه') + ' ' + cleanText(h.location || '') + ': ' + cleanText(h.details || ''));
   const parts = [];
   if (level === 'خطر ظاهر') { parts.push('تحذير:'); if (data.risk_summary) parts.push(cleanText(data.risk_summary)); if (hz.length) parts.push(hz.join('. ')); }
   else if (level === 'يستلزم الحذر' && !isQ && hz.length) parts.push(hz.join('. '));
@@ -2554,9 +2919,9 @@ async function findObjectLive(targetRaw) {
         const ar = normalizeArabicCommand(LOCAL_OBJECT_MAP[o.class].ar); return ar.includes(t) || t.includes(ar);
       });
       if (found) {
-        const pos = getRelativePositionArabic(found.bbox, videoElement.videoWidth), dist = estimateObjectDistance(found, videoElement.videoWidth, videoElement.videoHeight);
+        const pos = getRelativePositionArabic(found.bbox, videoElement.videoWidth);
         playSpatialBeep(sideFromPosition(pos), false); vibrate([50, 50, 50]);
-        const m = 'وجدت ' + LOCAL_OBJECT_MAP[found.class].ar + ' ' + pos + (dist ? (' ' + dist.text) : '') + '.';
+        const m = 'وجدت ' + LOCAL_OBJECT_MAP[found.class].ar + ' ' + pos + '. لا أستطيع تحديد المسافة من هذا الكشف وحده.';
         updateStatus(m); speak(m); return;
       }
     }
@@ -2567,7 +2932,7 @@ async function findObjectLive(targetRaw) {
       const match = (await analyzeLocalArchitecture()).find(line => normalizeArabicCommand(line).includes(t));
       if (match) { updateStatus('وجدت ' + match); speak('وجدت ' + match); return; }
     }
-    if (hasCloudVision()) { isProcessing = false; await captureAndAnalyze('هل ترى «' + targetRaw + '»؟ أين مكانه وكم يبعد بالخطوات؟'); return; }
+    if (hasCloudVision()) { isProcessing = false; await captureAndAnalyze('هل ترى «' + targetRaw + '»؟ أين مكانه وهل يبدو قريباً نسبياً؟ لا تخمّن مسافة بالمتر أو الخطوات.'); return; }
     const m = 'لم أجد «' + targetRaw + '» أمامي الآن.'; updateStatus(m); speak(m);
   } finally { isProcessing = false; }
 }
