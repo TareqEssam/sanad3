@@ -648,6 +648,8 @@ const riskIndicator = document.getElementById('risk-indicator');
 const videoElement = document.getElementById('camera-preview');
 const canvas = document.getElementById('canvas');
 const probeCanvas = document.getElementById('probe-canvas');
+// لوحة مستقلة لصورة OCR الثابتة؛ لا تشارك canvas الحية التي تستخدمها بقية الأدوات.
+const textSnapshotCanvas = document.createElement('canvas');
 const colorBtnLabel = document.getElementById('color-btn-label');
 
 function ocrReadyKey(lang) { return LS_OCR_READY_PREFIX + (lang === 'ara' ? 'ara' : 'ara_eng'); }
@@ -957,11 +959,11 @@ async function applyTorch(state, silent = false, isAuto = false) {
 }
 async function toggleTorch() { if (!torchSupported) { const m = 'الكشاف غير مدعوم هنا.'; updateStatus(m); speak(m); return; } torchManualOverride = true; await applyTorch(!torchOn, false, false); }
 
-function probeFrameQuality() {
-  const vw = videoElement.videoWidth, vh = videoElement.videoHeight;
+function probeFrameQuality(source = videoElement) {
+  const vw = source?.videoWidth || source?.width, vh = source?.videoHeight || source?.height;
   if (!vw || !vh) return null;
   const ctx = probeCanvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(videoElement, 0, 0, 160, 120);
+  ctx.drawImage(source, 0, 0, 160, 120);
   const d = ctx.getImageData(0, 0, 160, 120).data, lum = new Float32Array(160 * 120);
   let sumY = 0, sumR = 0, sumG = 0, sumB = 0, edgeSum = 0;
   for (let i = 0, p = 0; i < d.length; i += 4, p++) {
@@ -1707,7 +1709,7 @@ async function ensureOcrWorker() {
 async function preloadOcrFromSettings() {
   if (ocrInitPromise) return;
   preloadOcrBtn.disabled = true; preloadOcrBtn.textContent = 'جارٍ التحقق من الحزمة وحفظها...';
-  updateSettingsStatus(isSavedFlag(ocrReadyKey(ocrLang)) ? 'جارٍ التحقق من حزمة القراءة المحفوظة على الهاتف...' : 'جارٍ تنزيل لغة القراءة وحفظها على الهاتف...', true);
+  updateSettingsStatus(isSavedFlag(ocrReadyKey(ocrLang)) ? 'جارٍ التحقق من حزمة القراءة المحفوظة على الهاتف...' : 'جارٍ تنزيل حزمة القراءة وحفظها على الهاتف...', true);
   const w = await ensureOcrWorker();
   if (w) {
     writeLS(ocrReadyKey(ocrLang), '1');
@@ -1795,11 +1797,11 @@ function reportOcrProgress(value) {
   updateStatus('جاري تحليل النص محلياً: ' + next + '%');
   if (next >= 30 && !activeOcrProgress.announced30) {
     activeOcrProgress.announced30 = true;
-    speak('تحليل النص مستمر. أبق الهاتف ثابتاً.', false);
+    speak('تحليل النص مستمر على الصورة التي التقطتها. يمكنك إبعاد الهاتف.', false);
   }
   if (next >= 70 && !activeOcrProgress.announced70) {
     activeOcrProgress.announced70 = true;
-    speak('شارفت مرحلة قراءة الصورة على الانتهاء. أراجع وضوح النتيجة.', false);
+    speak('شارفت قراءة الصورة الثابتة على الانتهاء. أراجع وضوح النتيجة.', false);
   }
 }
 
@@ -1809,7 +1811,7 @@ async function runOcrPass(worker, mode, psm, angle, progressStart, progressSpan)
     activeOcrProgress.start = progressStart;
     activeOcrProgress.span = progressSpan;
   }
-  const image = mode === 'raw' ? canvas : makeOcrPreprocessedCanvas(canvas, mode, angle);
+  const image = mode === 'raw' ? textSnapshotCanvas : makeOcrPreprocessedCanvas(textSnapshotCanvas, mode, angle);
   const result = await worker.recognize(image);
   reportOcrProgress(progressStart + progressSpan);
   const clean = extractCleanLinesResult(result?.data || {});
@@ -1819,12 +1821,17 @@ async function runOcrPass(worker, mode, psm, angle, progressStart, progressSpan)
 async function recognizeTextWithQualityChecks(worker) {
   // One clean, unmodified pass first. A second conservative pass is only used
   // when the first result is short or its engine confidence is weak.
-  const first = await runOcrPass(worker, 'raw', 6, 0, 8, 62);
-  if (first.text.length >= 14 && first.score >= 82) {
+  // PSM 3 يكتشف تقسيم الصفحة تلقائياً، وهو أنسب للمستند الكامل متعدد الأسطر.
+  const first = await runOcrPass(worker, 'raw', 3, 0, 4, 61);
+  const firstHasArabic = /[\u0600-\u06FF]/.test(first.text);
+  // الإنجليزية الواضحة تنتهي من المحاولة الأولى؛ أما أي نتيجة عربية فتُراجع أيضاً
+  // بتقسيم كتلة واحدة لأن تقسيم الصفحة قد يخطئ في وصل الحروف والأسطر العربية.
+  if (first.text.length >= 14 && first.score >= 84 && !firstHasArabic) {
     return { ...first, uncertain: false, attempts: 1, agreement: null };
   }
 
-  const second = await runOcrPass(worker, 'gray', 6, 0, 73, 23);
+  // عند ضعف النتيجة أو وجود كتابة عربية نعيد تحليل الصورة نفسها ككتلة نص واحدة.
+  const second = await runOcrPass(worker, 'gray', 6, 0, 68, 27);
   const similarity = ocrSimilarity(normalizeOcrDigits(first.text), normalizeOcrDigits(second.text));
   const candidates = [first, second].filter(x => x.text && x.text.trim());
   const best = candidates.sort((a, b) => b.score - a.score || b.text.length - a.text.length)[0] || first;
@@ -1931,66 +1938,94 @@ async function captureSharpestCrispPhoto(maxDim, quality) {
   return (q2 && q1 && q2.sharpness >= q1.sharpness) ? captureFrame(maxDim, quality) : f1;
 }
 
+function captureTextSnapshotOnce() {
+  const vw = videoElement.videoWidth, vh = videoElement.videoHeight;
+  if (!vw || !vh || videoElement.readyState < 2) throw new Error('الكاميرا لم تجهز لالتقاط الصورة.');
+  const scale = Math.min(1, TEXT_MAX_DIM / Math.max(vw, vh));
+  textSnapshotCanvas.width = Math.max(1, Math.round(vw * scale));
+  textSnapshotCanvas.height = Math.max(1, Math.round(vh * scale));
+  const ctx = textSnapshotCanvas.getContext('2d', { alpha: false, willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  // عملية رسم واحدة فقط: جميع محاولات OCR اللاحقة تستخدم هذه الصورة الثابتة.
+  ctx.drawImage(videoElement, 0, 0, textSnapshotCanvas.width, textSnapshotCanvas.height);
+  return { width: textSnapshotCanvas.width, height: textSnapshotCanvas.height };
+}
+
 async function readTextSmart() {
   if (isProcessing) { updateStatus('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); speak('هناك عملية أخرى تعمل الآن. انتظر انتهائها.'); return; }
   isProcessing = true; hideRiskIndicator(); vibrate(35); playAckTone();
   activeOcrProgress = { start: 0, span: 0, last: 0, announced30: false, announced70: false };
-  speak('بدأت قراءة النص. وجّه الهاتف إلى الورقة واجعل النص بالكامل داخل الكاميرا، ثم أبق الهاتف ثابتاً. سأخبرك عندما تنتهي القراءة.');
+  lastRecognizedText = '';
   try {
+    updateStatus('وجّه الهاتف نحو النص واضغط مرة واحدة. جارٍ التقاط صورة واحدة...');
+    let captured = false;
     await withAutoTorchForCapture(async (q) => {
-      if (q?.isVeryDark) {
-        const m = 'الإضاءة مظلمة جداً أو العدسة مغطاة. لم أبدأ القراءة. حسّن الإضاءة ثم أعد المحاولة.';
-        updateStatus(m); speak(m); return;
-      }
-      let qrFound = '';
-      if (barcodeDetector) { try { const codes = await barcodeDetector.detect(videoElement); if (codes?.[0]?.rawValue) qrFound = String(codes[0].rawValue).trim(); } catch (e) {} }
-
-      updateStatus('أتحقق من محرك القراءة المحفوظ على الهاتف...');
-      const worker = await ensureOcrWorker();
-      if (!worker) {
-        const m = 'قارئ النص غير جاهز. يلزم تنزيل حزمة القراءة مرة واحدة من الإعدادات عند توفر الإنترنت.';
-        updateStatus(m); speak(m); return;
-      }
-
-      updateStatus('ألتقط صورة ثابتة للنص.');
-      await captureSharpestCrispPhoto(TEXT_MAX_DIM, 0.96);
-      updateStatus('تم التقاط الصورة. أبدأ القراءة المحلية الآن.');
-      speak('تم التقاط الصورة. أبدأ الآن تحليل النص على الهاتف دون إرسال الصورة إلى الإنترنت.', false);
-      const result = await recognizeTextWithQualityChecks(worker);
-      const text = String(result.text || '').trim();
-      lastRecognizedText = text;
-
-      if (!text && qrFound) {
-        const msg = 'لم أتمكن من استخراج النص، لكن تم التعرف على الرمز: ' + qrFound;
-        lastDescription = msg; updateStatus(msg); speak(msg, false); return;
-      }
-      if (!text || result.uncertain || result.score < 58) {
-        const msg = result.disagreement
-          ? 'حاولت قراءة الصورة بطريقتين، لكن النتيجتين مختلفتان. لن أقرأ نصاً قد يكون خاطئاً. أعد توجيه الهاتف بحيث تظهر الورقة كاملة، وثبّته تحت إضاءة جيدة.'
-          : 'لم أستخرج نصاً يمكن الاعتماد عليه. أعد التصوير من مسافة مناسبة، وتأكد من وضوح الحروف وعدم اهتزاز الهاتف.';
-        lastDescription = msg; updateStatus(msg); speak(msg, false); return;
-      }
-
-      if (ocrLang === 'ara' && /[A-Za-z]{2,}/.test(text)) {
-        const msg = 'إعداد قارئ النص مضبوط على العربية فقط. قد لا يتعرف على الكلمات الإنجليزية. غيّر اللغة في الإعدادات إلى عربي وإنجليزي ثم أعد المحاولة.';
-        updateStatus(msg); speak(msg, false); return;
-      }
-
-      let spoken = 'هذه قراءة آلية. تحقق بشكل خاص من الأرقام والتواريخ والأسماء. ' + text;
-      if (result.score < 72) spoken = 'تنبيه: ثقة محرك القراءة منخفضة، وقد توجد أخطاء. ' + spoken;
-      if (qrFound) spoken += '. الرمز المقروء: ' + qrFound;
-      if (result.score >= 82) spoken += detectExpiryWarning(text);
-      else if (/(exp|expiry|انتهاء|صلاحية)/i.test(text)) spoken += ' لم أتمكن من التحقق من تاريخ الصلاحية بثقة؛ لا تعتمد على هذه القراءة قبل مراجعة العبوة مع صيدلي.';
-
-      lastDescription = spoken;
-      reportOcrProgress(96);
-      updateStatus('انتهى تحليل الصورة. تم استخدام ' + result.attempts + ' محاولة. ' + spoken);
-      if (activeOcrProgress) activeOcrProgress.last = 100;
-      speak(spoken, false);
+      if (q?.isVeryDark) return;
+      captureTextSnapshotOnce();
+      captured = true;
     });
+
+    if (!captured) {
+      const m = 'لم أتمكن من التقاط الصورة. تأكد من أن الكاميرا ترى النص وأن العدسة غير مغطاة، ثم حاول مرة أخرى.';
+      updateStatus(m); await speakWait(m); return;
+    }
+
+    const snapshotQuality = probeFrameQuality(textSnapshotCanvas);
+    if (snapshotQuality?.isVeryDark) {
+      const m = 'تم التقاط صورة واحدة، لكن الصورة مظلمة أو العدسة مغطاة. أعد المحاولة بعد تحسين الإضاءة وكشف العدسة.';
+      updateStatus(m); await speakWait(m); return;
+    }
+
+    updateStatus('تم التقاط صورة واحدة. يمكنك إبعاد الهاتف الآن؛ سأحلل الصورة الثابتة.');
+    // ننتظر الإعلان حتى يسمعه المستخدم قبل أي تهيئة طويلة للمحرك.
+    await speakWait('تم التقاط صورة واحدة للنص. يمكنك إبعاد الهاتف الآن، ولا حاجة لإبقاء الهاتف موجهاً إلى الورقة أثناء التحليل.');
+
+    let qrFound = '';
+    if (barcodeDetector) {
+      try {
+        const codes = await barcodeDetector.detect(textSnapshotCanvas);
+        if (codes?.[0]?.rawValue) qrFound = String(codes[0].rawValue).trim();
+      } catch (e) {}
+    }
+
+    updateStatus('الصورة محفوظة مؤقتاً داخل الهاتف. جارٍ فتح حزمة القراءة المحفوظة...');
+    const worker = await ensureOcrWorker();
+    if (!worker) {
+      const m = 'تم التقاط الصورة، لكن محرك القراءة غير جاهز. نزّل حزمة القراءة مرة واحدة من الإعدادات عند توفر الإنترنت، ثم أعد المحاولة.';
+      updateStatus(m); speak(m); return;
+    }
+
+    updateStatus('بدأ تحليل الصورة الثابتة محلياً. يمكنك ترك الهاتف جانباً.');
+    const result = await recognizeTextWithQualityChecks(worker);
+    const text = String(result.text || '').trim();
+    lastRecognizedText = text;
+
+    if (!text && qrFound) {
+      const msg = 'لم أتمكن من استخراج النص، لكن تم التعرف على الرمز: ' + qrFound;
+      lastDescription = msg; updateStatus(msg); speak(msg); return;
+    }
+    if (!text || result.uncertain || result.score < 58) {
+      const msg = result.disagreement
+        ? 'حللت الصورة بإعدادين مختلفين، لكن النص الناتج غير متطابق بما يكفي. لن أقرأه حتى لا أضللك. حاول التقاط النص أقرب وبإضاءة جيدة.'
+        : 'لم أستخرج نصاً يمكن الاعتماد عليه من الصورة. يمكنك إعادة المحاولة؛ لا حاجة لإبقاء الهاتف موجهاً أثناء هذه الرسالة.';
+      lastDescription = msg; updateStatus(msg); speak(msg); return;
+    }
+
+    let spoken = 'هذه قراءة آلية. تحقق بشكل خاص من الأرقام والتواريخ والأسماء. ' + text;
+    if (result.score < 72) spoken = 'تنبيه: ثقة محرك القراءة منخفضة، وقد توجد أخطاء. ' + spoken;
+    if (qrFound) spoken += '. الرمز المقروء: ' + qrFound;
+    if (result.score >= 82) spoken += detectExpiryWarning(text);
+    else if (/(exp|expiry|انتهاء|صلاحية)/i.test(text)) spoken += ' لم أتمكن من التحقق من تاريخ الصلاحية بثقة؛ لا تعتمد على هذه القراءة قبل مراجعة العبوة مع صيدلي.';
+
+    lastDescription = spoken;
+    reportOcrProgress(96);
+    updateStatus('انتهى تحليل الصورة الثابتة. تم استخدام ' + result.attempts + ' محاولة. ' + spoken);
+    if (activeOcrProgress) activeOcrProgress.last = 100;
+    speak(spoken);
   } catch (e) {
-    const msg = 'تعذرت قراءة الصورة بسبب خطأ في المحرك أو الكاميرا. لا تعتمد على أي نتيجة سابقة. أعد المحاولة.';
-    updateStatus(msg); speak(msg, false);
+    const msg = 'تعذرت قراءة الصورة بسبب خطأ في المحرك أو الكاميرا. لم ألتقط صورة ثانية تلقائياً. أعد المحاولة.';
+    updateStatus(msg); speak(msg);
   } finally {
     activeOcrProgress = null;
     isProcessing = false;
